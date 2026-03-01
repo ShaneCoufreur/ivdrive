@@ -121,7 +121,7 @@ class DataCollector:
                 continue
             job_id = f"collect_{vehicle.id}"
             current = self._get_job_interval_seconds(job_id)
-            if current == vehicle.parked_interval_seconds:
+            if current in (vehicle.parked_interval_seconds, vehicle.active_interval_seconds):
                 continue
             self.register_vehicle(vehicle.id, vehicle.parked_interval_seconds)
             updated += 1
