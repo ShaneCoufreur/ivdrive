@@ -1,0 +1,157 @@
+name: Validate PR Description
+
+on:
+  pull_request:
+    types: [opened, synchronize, edited, reopened]
+
+jobs:
+  validate-pr-description:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get PR description
+        id: pr-description
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
+            
+            core.setOutput('body', pr.body || '');
+            return pr.body || '';
+
+      - name: Validate PR description
+        id: validate
+        env:
+          PR_BODY: ${{ steps.pr-description.outputs.body }}
+        run: |
+          # PR body is passed via env to avoid command injection (no interpolation into script)
+          # Remove HTML comments (they're just guidance)
+          CLEANED_BODY=$(echo "$PR_BODY" | sed 's/<!--[^>]*-->//g')
+          
+          # Check if PR body is empty or too short
+          if [ -z "$PR_BODY" ] || [ ${#CLEANED_BODY} -lt 50 ]; then
+            echo "❌ PR description is empty or too short"
+            echo "is_valid=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          # Extract Summary section (between "## 📋 Summary" and next "---")
+          SUMMARY_SECTION=$(echo "$PR_BODY" | awk '/## 📋 Summary/,/^---$/' | head -n -1 | tail -n +2)
+          
+          # Remove comments, empty lines, and template text
+          SUMMARY_CONTENT=$(echo "$SUMMARY_SECTION" | \
+            grep -v '^<!--' | \
+            grep -v '^$' | \
+            grep -v '🤖 PR Agent' | \
+            grep -v 'Brief description' | \
+            grep -v 'Related Issues' | \
+            grep -v '^\*\*Related Issues:\*\*' | \
+            grep -v '^Closes #' | \
+            grep -v '^#' | \
+            sed 's/^[[:space:]]*//' | \
+            sed '/^$/d')
+          
+          # Check if summary has meaningful content (at least 20 non-whitespace characters)
+          SUMMARY_LENGTH=$(echo "$SUMMARY_CONTENT" | tr -d '[:space:]' | wc -c)
+          
+          if [ -z "$SUMMARY_CONTENT" ] || [ "$SUMMARY_LENGTH" -lt 20 ]; then
+            echo "❌ Summary section is not filled out (needs at least 20 characters of actual content)"
+            echo "is_valid=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          # Check if at least one Type of Change is checked ([x] or [X])
+          TYPE_SECTION=$(echo "$PR_BODY" | awk '/## 🧩 Type of Change/,/^---$/')
+          CHECKED_TYPES=$(echo "$TYPE_SECTION" | grep -oE '\[[xX]\]' | wc -l)
+          
+          if [ "$CHECKED_TYPES" -eq 0 ]; then
+            echo "❌ No Type of Change is selected (at least one checkbox must be checked)"
+            echo "is_valid=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          echo "✅ PR description validation passed"
+          echo "  - Summary: $SUMMARY_LENGTH characters"
+          echo "  - Type of Change: $CHECKED_TYPES checked"
+          echo "is_valid=true" >> $GITHUB_OUTPUT
+
+      - name: Comment on PR if validation fails
+        if: steps.validate.outputs.is_valid == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const comment = `## ❌ PR Description Validation Failed
+            
+            Your PR description appears to be incomplete. Please ensure:
+            
+            1. **Summary section** - Add a brief description of what this PR does (at least 20 characters)
+            2. **Type of Change** - Check at least one checkbox to indicate the type of change
+            
+            The PR Agent will automatically enhance your description with detailed file walkthroughs, but you need to provide the initial summary.
+            
+            ---
+            *This check will pass once you update your PR description.*`;
+            
+            // Find existing validation comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            
+            const existingComment = comments.find(comment => 
+              comment.user.type === 'Bot' && 
+              comment.body.includes('PR Description Validation Failed')
+            );
+            
+            if (existingComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existingComment.id,
+                body: comment
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: comment
+              });
+            }
+            
+            core.setFailed('PR description validation failed');
+
+      - name: Remove validation comment if passed
+        if: steps.validate.outputs.is_valid == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Find and delete existing validation comment if it exists
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            
+            const validationComment = comments.find(comment => 
+              comment.user.type === 'Bot' && 
+              comment.body.includes('PR Description Validation Failed')
+            );
+            
+            if (validationComment) {
+              await github.rest.issues.deleteComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: validationComment.id,
+              });
+            }

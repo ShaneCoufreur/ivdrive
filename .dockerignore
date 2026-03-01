@@ -1,0 +1,10 @@
+issues.md
+.env
+.DS_Store
+_build_images.sh
+_cleanup.sh
+_load_amd64_images_on_nas.sh
+_scan_secrets.sh
+transfer-images-to-nas.sh
+transfer-project-and-build-on-nas.sh
+_local_docs/

@@ -1,0 +1,161 @@
+@import "tailwindcss";
+
+:root {
+  --iv-black: #f5f7fa;
+  --iv-charcoal: #ffffff;
+  --iv-green: #4BA82E;
+  --iv-cyan: #0099cc;
+  --iv-glow: #1a5c1a;
+  --iv-surface: #eef1f6;
+  --iv-border: #d8dce6;
+  --iv-text: #1a1d2e;
+  --iv-text-muted: #6b7085;
+  --iv-danger: #dc2626;
+  --iv-warning: #d97706;
+
+  --background: var(--iv-black);
+  --foreground: var(--iv-text);
+}
+
+.dark {
+  --iv-black: #0A0E1A;
+  --iv-charcoal: #1C1C2E;
+  --iv-green: #4BA82E;
+  --iv-cyan: #00D4FF;
+  --iv-glow: #E0FFFF;
+  --iv-surface: #141828;
+  --iv-border: #2a2d42;
+  --iv-text: #e0e4ef;
+  --iv-text-muted: #8b8fa3;
+  --iv-danger: #ef4444;
+  --iv-warning: #f59e0b;
+
+  --background: var(--iv-black);
+  --foreground: var(--iv-text);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+
+  --color-iv-black: var(--iv-black);
+  --color-iv-charcoal: var(--iv-charcoal);
+  --color-iv-surface: var(--iv-surface);
+  --color-iv-border: var(--iv-border);
+  --color-iv-green: var(--iv-green);
+  --color-iv-cyan: var(--iv-cyan);
+  --color-iv-glow: var(--iv-glow);
+  --color-iv-text: var(--iv-text);
+  --color-iv-muted: var(--iv-text-muted);
+  --color-iv-danger: var(--iv-danger);
+  --color-iv-warning: var(--iv-warning);
+}
+
+body {
+  background: var(--iv-black);
+  color: var(--iv-text);
+  font-family: var(--font-sans, 'Inter', system-ui, sans-serif);
+}
+
+.gradient-text {
+  background: linear-gradient(135deg, #4BA82E, var(--iv-cyan));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.gradient-border {
+  border: 1px solid transparent;
+  background-clip: padding-box;
+  position: relative;
+}
+
+.gradient-border::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, #4BA82E, var(--iv-cyan));
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+.glass {
+  background: var(--iv-charcoal);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--iv-border);
+}
+
+.dark .glass {
+  background: rgba(28, 28, 46, 0.6);
+  border-color: rgba(75, 168, 46, 0.15);
+}
+
+.glow-green {
+  box-shadow: 0 0 20px rgba(75, 168, 46, 0.15), 0 0 60px rgba(75, 168, 46, 0.05);
+}
+
+.map-fade-mask {
+  /* Removed unused mask class */
+}
+
+/* Offset Leaflet zoom controls so they don't overlap our coordinate label */
+.leaflet-bottom.leaflet-left {
+  margin-bottom: 2.2rem;
+}
+
+.glow-cyan {
+  box-shadow: 0 0 20px rgba(0, 212, 255, 0.15), 0 0 60px rgba(0, 212, 255, 0.05);
+}
+
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0px 1000px var(--iv-surface) inset;
+  -webkit-text-fill-color: var(--iv-text);
+  transition: background-color 5000s ease-in-out 0s;
+}
+
+/* Tremor Fallback Colors for Tailwind V4 */
+@theme {
+  --color-tremor-brand-faint: #eff6ff;
+  --color-tremor-brand-muted: #bfdbfe;
+  --color-tremor-brand-subtle: #60a5fa;
+  --color-tremor-brand: #3b82f6;
+  --color-tremor-brand-emphasis: #1d4ed8;
+  --color-tremor-brand-inverted: #ffffff;
+  
+  --color-tremor-background: #ffffff;
+  --color-tremor-background-muted: #f9fafb;
+  --color-tremor-background-subtle: #f3f4f6;
+  
+  --color-tremor-border: #e5e7eb;
+  
+  --color-tremor-content: #6b7280;
+  --color-tremor-content-emphasis: #374151;
+  --color-tremor-content-strong: #111827;
+  --color-tremor-content-inverted: #ffffff;
+
+  --color-dark-tremor-brand-faint: #0B1229;
+  --color-dark-tremor-brand-muted: #172554;
+  --color-dark-tremor-brand-subtle: #1e3a8a;
+  --color-dark-tremor-brand: #3b82f6;
+  --color-dark-tremor-brand-emphasis: #60a5fa;
+  --color-dark-tremor-brand-inverted: #0f172a;
+  
+  --color-dark-tremor-background: #1C1C2E;
+  --color-dark-tremor-background-muted: #131A2B;
+  --color-dark-tremor-background-subtle: #1e293b;
+  
+  --color-dark-tremor-border: #2a2d42;
+  
+  --color-dark-tremor-content: #8b8fa3;
+  --color-dark-tremor-content-emphasis: #e0e4ef;
+  --color-dark-tremor-content-strong: #f8fafc;
+  --color-dark-tremor-content-inverted: #0f172a;
+}
