@@ -1,0 +1,13 @@
+data/
+backend/.venv/
+frontend/.next/
+__pycache__/
+issues.md
+release-notes.md
+.env
+.env.*
+!.env.example
+!backend/.env.example
+.DS_Store
+# Local / dev-only docs (never commit or ship)
+_local_docs/

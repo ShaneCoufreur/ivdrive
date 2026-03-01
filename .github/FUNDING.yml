@@ -1,0 +1,14 @@
+# Funding / donation links for iVDrive
+# These appear in the "Sponsor" button on the GitHub repo.
+# Replace the placeholder(s) below with your actual links.
+
+# GitHub Sponsors (optional): sign up at https://github.com/sponsors then uncomment
+github: [m7xlab]
+
+# Ko-fi (optional): https://ko-fi.com — use your username
+ko_fi: m7xlaboratory
+
+# Custom URLs: PayPal, Buy Me a Coffee, etc. Replace with your page(s).
+#custom: ['https://www.paypal.me/gkristopaitis']
+# You can add more: ['url1', 'https://www.buymeacoffee.com/yourpage']
+buy_me_a_coffee: ['https://buymeacoffee.com/m7xlab']

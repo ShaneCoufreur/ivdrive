@@ -1,0 +1,51 @@
+"""JWT token management and password hashing."""
+
+from datetime import UTC, datetime, timedelta
+
+import bcrypt
+from jose import JWTError, jwt
+
+from app.config import settings
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return bcrypt.checkpw(
+        plain_password.encode("utf-8"),
+        hashed_password.encode("utf-8"),
+    )
+
+
+def get_password_hash(password: str) -> str:
+    return bcrypt.hashpw(
+        password.encode("utf-8"),
+        bcrypt.gensalt(),
+    ).decode("utf-8")
+
+
+def create_access_token(subject: str, extra: dict | None = None) -> str:
+    expire = datetime.now(UTC) + timedelta(minutes=settings.access_token_expire_minutes)
+    to_encode = {"sub": subject, "exp": expire, "type": "access"}
+    if extra:
+        to_encode.update(extra)
+    return jwt.encode(to_encode, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+
+
+def create_refresh_token(subject: str) -> str:
+    expire = datetime.now(UTC) + timedelta(days=settings.refresh_token_expire_days)
+    to_encode = {"sub": subject, "exp": expire, "type": "refresh"}
+    return jwt.encode(to_encode, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+
+
+def decode_token(token: str) -> dict:
+    """Decode and validate a JWT token. Raises JWTError on failure."""
+    return jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
+
+
+__all__ = [
+    "JWTError",
+    "verify_password",
+    "get_password_hash",
+    "create_access_token",
+    "create_refresh_token",
+    "decode_token",
+]

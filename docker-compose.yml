@@ -1,0 +1,115 @@
+version: "3.9"
+
+networks:
+  bridge:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/16
+  backend:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.31.0.0/16
+
+services:
+  ivdrive-api:
+    image: ivdrive-ivdrive-api:latest
+    build:
+      context: ./backend
+      target: api
+    environment:
+      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
+      VALKEY_URL: "valkey://:${VALKEY_PASSWORD}@valkey:6379/0"
+      JWT_SECRET_KEY: "${JWT_SECRET_KEY}"
+      ENCRYPTION_KEY: "${ENCRYPTION_KEY}"
+      CORS_ORIGINS: "${CORS_ORIGINS}"
+      STATISTICS_QUERY_DEBUG: "${STATISTICS_QUERY_DEBUG:-false}"
+    networks:
+      - backend
+    # API not exposed on host: reverse proxy and containers reach it via backend network (ivdrive-api:8000)
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    ports:
+      - "8035:8000"
+    restart: unless-stopped
+
+  ivdrive-web:
+    image: ivdrive-ivdrive-web:latest
+    build:
+      context: ./frontend
+    environment:
+      NEXT_PUBLIC_API_URL: "${NEXT_PUBLIC_API_URL:-}"
+    networks:
+      - backend
+    ports:
+      - "3035:3000"
+    depends_on:
+      - ivdrive-api
+    restart: unless-stopped
+
+  ivdrive-collector:
+    image: ivdrive-ivdrive-collector:latest
+    build:
+      context: ./backend
+      target: collector
+    environment:
+      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}"
+      VALKEY_URL: "valkey://:${VALKEY_PASSWORD}@valkey:6379/0"
+      JWT_SECRET_KEY: "${JWT_SECRET_KEY}"
+      ENCRYPTION_KEY: "${ENCRYPTION_KEY}"
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+      COLLECTOR_DEBUG: "${COLLECTOR_DEBUG:-false}"
+    networks:
+      - backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:18
+    networks:
+      - backend
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      POSTGRES_DB: "${POSTGRES_DB}"
+    volumes:
+      - ./data/postgresql:/var/lib/postgresql/
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "7432:5432"
+    restart: unless-stopped
+
+  valkey:
+    image: valkey/valkey:9.0.2-alpine
+    command: ["valkey-server", "--requirepass", "${VALKEY_PASSWORD}"]
+    networks:
+      - backend
+    volumes:
+      - ./data/valkeydata:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "-a", "${VALKEY_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "7379:6379"
+    restart: unless-stopped
+
+volumes:
+  # Docker-managed named volumes (data stored in Docker’s volume dir).
+  # To use a fixed host path instead, use bind mounts per service, e.g.:
+  #   - ./data/postgresql:/var/lib/postgresql/
+  postgres_data:
+  valkey_data:

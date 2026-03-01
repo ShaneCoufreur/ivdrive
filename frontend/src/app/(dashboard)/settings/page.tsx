@@ -1,0 +1,417 @@
+"use client";
+
+import { useEffect, useState, useCallback } from "react";
+import {
+  User,
+  KeyRound,
+  MapPin,
+  Trash2,
+  Plus,
+  LogOut,
+  Loader2,
+  CheckCircle2,
+  XCircle,
+  Shield,
+  Car,
+  Timer,
+  Wifi,
+  WifiOff,
+} from "lucide-react";
+import { useAuth } from "@/lib/auth-context";
+import { api } from "@/lib/api";
+
+interface SettingsVehicle {
+  id: string;
+  display_name: string | null;
+  manufacturer: string | null;
+  model: string | null;
+  model_year: number | null;
+  collection_enabled: boolean;
+  collection_interval_seconds: number;
+  connector_status: string | null;
+  last_fetch_at: string | null;
+  created_at: string;
+}
+
+interface Geofence {
+  id: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+  radius_meters: number;
+  address: string | null;
+  created_at: string;
+}
+
+function Toast({ status, message, onDismiss }: { status: "success" | "error"; message: string; onDismiss: () => void }) {
+  useEffect(() => { const t = setTimeout(onDismiss, 4000); return () => clearTimeout(t); }, [onDismiss]);
+  return (
+    <div className={`flex items-center gap-2 rounded-lg px-4 py-3 text-sm ${status === "success" ? "bg-iv-green/10 text-iv-green" : "bg-iv-danger/10 text-iv-danger"}`}>
+      {status === "success" ? <CheckCircle2 size={16} /> : <XCircle size={16} />}
+      <span className="flex-1">{message}</span>
+      <button onClick={onDismiss} className="opacity-60 hover:opacity-100">×</button>
+    </div>
+  );
+}
+
+function SectionCard({ icon: Icon, title, children }: { icon: React.ElementType; title: string; children: React.ReactNode }) {
+  return (
+    <div className="glass rounded-xl overflow-hidden">
+      <div className="flex items-center gap-3 border-b border-iv-border px-5 py-4">
+        <Icon size={18} className="text-iv-green flex-shrink-0" />
+        <h2 className="text-base font-semibold text-iv-text">{title}</h2>
+      </div>
+      <div className="p-5">{children}</div>
+    </div>
+  );
+}
+
+const inputClasses = "w-full rounded-lg bg-iv-surface border border-iv-border px-4 py-2.5 text-sm text-iv-text placeholder:text-iv-muted/60 focus:outline-none focus:border-iv-green/50 transition-colors";
+const btnPrimaryClasses = "rounded-lg bg-iv-green/15 px-5 py-2.5 text-sm font-medium text-iv-green transition-colors hover:bg-iv-green/25 disabled:opacity-50 disabled:cursor-not-allowed";
+
+function ConnectorStatusBadge({ status }: { status: string | null }) {
+  if (!status) return null;
+  const map: Record<string, { color: string; label: string }> = {
+    active: { color: "bg-iv-green/15 text-iv-green border-iv-green/20", label: "Active" },
+    pending: { color: "bg-iv-warning/15 text-iv-warning border-iv-warning/20", label: "Pending" },
+    auth_failed: { color: "bg-iv-danger/15 text-iv-danger border-iv-danger/20", label: "Auth Failed" },
+    token_error: { color: "bg-iv-danger/15 text-iv-danger border-iv-danger/20", label: "Token Error" },
+  };
+  const cfg = map[status] || { color: "bg-iv-surface text-iv-muted border-iv-border", label: status };
+  return <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${cfg.color}`}>{cfg.label}</span>;
+}
+
+export default function SettingsPage() {
+  const { user, logout, refreshUser } = useAuth();
+  const [toast, setToast] = useState<{ status: "success" | "error"; message: string } | null>(null);
+
+  const [displayName, setDisplayName] = useState("");
+  const [profileSaving, setProfileSaving] = useState(false);
+
+  const [oldPassword, setOldPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordSaving, setPasswordSaving] = useState(false);
+
+  const [vehicles, setVehicles] = useState<SettingsVehicle[]>([]);
+  const [vehiclesLoading, setVehiclesLoading] = useState(true);
+  const [vehicleDeleting, setVehicleDeleting] = useState<string | null>(null);
+  const [deleteModalId, setDeleteModalId] = useState<string | null>(null);
+  const [editingInterval, setEditingInterval] = useState<string | null>(null);
+  const [intervalValue, setIntervalValue] = useState(300);
+
+  const [geofences, setGeofences] = useState<Geofence[]>([]);
+  const [geofencesLoading, setGeofencesLoading] = useState(true);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [gfName, setGfName] = useState("");
+  const [gfLat, setGfLat] = useState("");
+  const [gfLon, setGfLon] = useState("");
+  const [gfRadius, setGfRadius] = useState("100");
+  const [gfAddress, setGfAddress] = useState("");
+  const [gfSaving, setGfSaving] = useState(false);
+  const [gfDeleting, setGfDeleting] = useState<string | null>(null);
+
+  useEffect(() => { if (user) setDisplayName(user.display_name || ""); }, [user]);
+
+  const loadVehicles = useCallback(async () => {
+    try { const data = await api.getVehicles(); setVehicles(data); }
+    finally { setVehiclesLoading(false); }
+  }, []);
+
+  const loadGeofences = useCallback(async () => {
+    try { const data = await api.getGeofences(); setGeofences(data); }
+    finally { setGeofencesLoading(false); }
+  }, []);
+
+  useEffect(() => { loadVehicles(); loadGeofences(); }, [loadVehicles, loadGeofences]);
+
+  const showToast = (status: "success" | "error", message: string) => setToast({ status, message });
+
+  const handleDeleteVehicle = async (id: string) => {
+    setVehicleDeleting(id);
+    setDeleteModalId(null);
+    try { await api.deleteVehicle(id); await loadVehicles(); showToast("success", "Vehicle removed"); }
+    catch (err) { showToast("error", err instanceof Error ? err.message : "Failed to delete vehicle"); }
+    finally { setVehicleDeleting(null); }
+  };
+
+  const handleSaveInterval = async (id: string) => {
+    try {
+      await api.updateVehicle(id, { collection_interval_seconds: intervalValue });
+      await loadVehicles();
+      setEditingInterval(null);
+      showToast("success", "Collection interval updated");
+    } catch (err) {
+      showToast("error", err instanceof Error ? err.message : "Failed to update interval");
+    }
+  };
+
+  const handleProfileSave = async () => {
+    setProfileSaving(true);
+    try { await api.updateMe({ display_name: displayName }); await refreshUser(); showToast("success", "Profile updated"); }
+    catch (err) { showToast("error", err instanceof Error ? err.message : "Failed to update profile"); }
+    finally { setProfileSaving(false); }
+  };
+
+  const handlePasswordChange = async () => {
+    if (newPassword !== confirmPassword) { showToast("error", "Passwords do not match"); return; }
+    if (newPassword.length < 8) { showToast("error", "Password must be at least 8 characters"); return; }
+    setPasswordSaving(true);
+    try {
+      await api.changePassword(oldPassword, newPassword);
+      setOldPassword(""); setNewPassword(""); setConfirmPassword("");
+      showToast("success", "Password changed successfully");
+    } catch (err) { showToast("error", err instanceof Error ? err.message : "Failed to change password"); }
+    finally { setPasswordSaving(false); }
+  };
+
+  const handleAddGeofence = async () => {
+    if (!gfName || !gfLat || !gfLon || !gfRadius) { showToast("error", "Name, latitude, longitude, and radius are required"); return; }
+    setGfSaving(true);
+    try {
+      await api.createGeofence({ name: gfName, latitude: parseFloat(gfLat), longitude: parseFloat(gfLon), radius_meters: parseInt(gfRadius, 10), address: gfAddress || undefined });
+      setGfName(""); setGfLat(""); setGfLon(""); setGfRadius("100"); setGfAddress(""); setShowAddForm(false);
+      await loadGeofences(); showToast("success", "Geofence created");
+    } catch (err) { showToast("error", err instanceof Error ? err.message : "Failed to create geofence"); }
+    finally { setGfSaving(false); }
+  };
+
+  const handleDeleteGeofence = async (id: string) => {
+    setGfDeleting(id);
+    try { await api.deleteGeofence(id); await loadGeofences(); showToast("success", "Geofence deleted"); }
+    catch (err) { showToast("error", err instanceof Error ? err.message : "Failed to delete geofence"); }
+    finally { setGfDeleting(null); }
+  };
+
+  const intervalLabel = (s: number) => {
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60);
+    return m < 60 ? `${m} min` : `${Math.floor(m / 60)}h ${m % 60}m`;
+  };
+
+  return (
+    <div className="mx-auto max-w-2xl space-y-6">
+      <h1 className="text-2xl font-bold text-iv-text">Settings</h1>
+
+      {toast && <Toast status={toast.status} message={toast.message} onDismiss={() => setToast(null)} />}
+
+      {/* Vehicles */}
+      <SectionCard icon={Car} title="Vehicles">
+        <div className="space-y-2">
+          {vehiclesLoading ? (
+            <div className="flex items-center justify-center py-8"><Loader2 size={20} className="animate-spin text-iv-muted" /></div>
+          ) : vehicles.length === 0 ? (
+            <div className="text-center py-8">
+              <Car size={28} className="mx-auto mb-2 text-iv-muted" />
+              <p className="text-sm text-iv-muted">No vehicles added yet</p>
+            </div>
+          ) : (
+            vehicles.map((v) => (
+              <div key={v.id} className="rounded-lg bg-iv-surface border border-iv-border p-3 space-y-2">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-iv-green/10">
+                    <Car size={14} className="text-iv-green" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-medium text-iv-text truncate">
+                        {v.display_name || `${v.manufacturer || ""} ${v.model || ""}`.trim() || "Vehicle"}
+                      </p>
+                      <ConnectorStatusBadge status={v.connector_status} />
+                    </div>
+                    <p className="text-xs text-iv-muted">
+                      Added {new Date(v.created_at).toLocaleDateString()}
+                      {v.last_fetch_at && ` · Last fetch ${new Date(v.last_fetch_at).toLocaleString()}`}
+                    </p>
+                  </div>
+                  <button onClick={() => setDeleteModalId(v.id)} disabled={vehicleDeleting === v.id}
+                    className="flex h-8 items-center gap-1.5 flex-shrink-0 rounded-lg px-2 text-xs font-medium text-iv-muted hover:text-iv-danger hover:bg-iv-danger/10 transition-colors disabled:opacity-50">
+                    {vehicleDeleting === v.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                    Remove
+                  </button>
+                </div>
+
+                {/* Collection interval */}
+                <div className="flex items-center gap-3 pl-11">
+                  <Timer size={12} className="text-iv-muted flex-shrink-0" />
+                  {editingInterval === v.id ? (
+                    <div className="flex items-center gap-2 flex-1">
+                      <input type="range" min={180} max={3600} step={60} value={intervalValue}
+                        onChange={(e) => setIntervalValue(Number(e.target.value))}
+                        className="flex-1 accent-iv-green" />
+                      <span className="text-xs text-iv-cyan font-mono w-14 text-right">{intervalLabel(intervalValue)}</span>
+                      <button onClick={() => handleSaveInterval(v.id)}
+                        className="text-xs text-iv-green hover:underline">Save</button>
+                      <button onClick={() => setEditingInterval(null)}
+                        className="text-xs text-iv-muted hover:underline">Cancel</button>
+                    </div>
+                  ) : (
+                    <button onClick={() => { setEditingInterval(v.id); setIntervalValue(v.collection_interval_seconds); }}
+                      className="text-xs text-iv-muted hover:text-iv-text transition-colors">
+                      Interval: {intervalLabel(v.collection_interval_seconds)} <span className="text-iv-cyan/60 ml-1">Edit</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </SectionCard>
+
+      {/* Profile */}
+      <SectionCard icon={User} title="Profile">
+        <div className="space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-iv-muted mb-1.5">Email</label>
+            <div className="rounded-lg bg-iv-surface border border-iv-border px-4 py-2.5 text-sm text-iv-muted">{user?.email}</div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-iv-muted mb-1.5">Display Name</label>
+            <input type="text" value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Your name" className={inputClasses} />
+          </div>
+          <div className="flex justify-end">
+            <button onClick={handleProfileSave} disabled={profileSaving} className={btnPrimaryClasses}>
+              {profileSaving ? <span className="flex items-center gap-2"><Loader2 size={14} className="animate-spin" />Saving...</span> : "Save Profile"}
+            </button>
+          </div>
+        </div>
+      </SectionCard>
+
+      {/* Change Password */}
+      <SectionCard icon={KeyRound} title="Change Password">
+        <div className="space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-iv-muted mb-1.5">Current Password</label>
+            <input type="password" value={oldPassword} onChange={(e) => setOldPassword(e.target.value)} placeholder="Enter current password" className={inputClasses} />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-iv-muted mb-1.5">New Password</label>
+            <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="Enter new password" className={inputClasses} />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-iv-muted mb-1.5">Confirm New Password</label>
+            <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} placeholder="Confirm new password" className={inputClasses} />
+          </div>
+          <div className="flex justify-end">
+            <button onClick={handlePasswordChange} disabled={passwordSaving || !oldPassword || !newPassword || !confirmPassword} className={btnPrimaryClasses}>
+              {passwordSaving ? <span className="flex items-center gap-2"><Loader2 size={14} className="animate-spin" />Changing...</span> : "Change Password"}
+            </button>
+          </div>
+        </div>
+      </SectionCard>
+
+      {/* Geofences */}
+      <SectionCard icon={MapPin} title="Geofences">
+        <div className="space-y-4">
+          {geofencesLoading ? (
+            <div className="flex items-center justify-center py-8"><Loader2 size={20} className="animate-spin text-iv-muted" /></div>
+          ) : geofences.length === 0 && !showAddForm ? (
+            <div className="text-center py-8">
+              <MapPin size={28} className="mx-auto mb-2 text-iv-muted" />
+              <p className="text-sm text-iv-muted">No geofences configured</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {geofences.map((gf) => (
+                <div key={gf.id} className="flex items-center gap-3 rounded-lg bg-iv-surface border border-iv-border p-3">
+                  <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-iv-cyan/10">
+                    <MapPin size={14} className="text-iv-cyan" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-iv-text truncate">{gf.name}</p>
+                    <p className="text-xs text-iv-muted truncate">
+                      {gf.address || `${gf.latitude.toFixed(4)}, ${gf.longitude.toFixed(4)}`} · {gf.radius_meters}m radius
+                    </p>
+                  </div>
+                  <button onClick={() => handleDeleteGeofence(gf.id)} disabled={gfDeleting === gf.id}
+                    className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-iv-muted hover:text-iv-danger hover:bg-iv-danger/10 transition-colors disabled:opacity-50">
+                    {gfDeleting === gf.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {showAddForm ? (
+            <div className="rounded-lg bg-iv-surface border border-iv-border p-4 space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-iv-muted mb-1">Name</label>
+                <input type="text" value={gfName} onChange={(e) => setGfName(e.target.value)} placeholder="Home, Work, etc." className={inputClasses} />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-iv-muted mb-1">Latitude</label>
+                  <input type="number" step="any" value={gfLat} onChange={(e) => setGfLat(e.target.value)} placeholder="54.6872" className={inputClasses} />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-iv-muted mb-1">Longitude</label>
+                  <input type="number" step="any" value={gfLon} onChange={(e) => setGfLon(e.target.value)} placeholder="25.2797" className={inputClasses} />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-iv-muted mb-1">Radius (meters)</label>
+                  <input type="number" value={gfRadius} onChange={(e) => setGfRadius(e.target.value)} placeholder="100" className={inputClasses} />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-iv-muted mb-1">Address (optional)</label>
+                  <input type="text" value={gfAddress} onChange={(e) => setGfAddress(e.target.value)} placeholder="123 Main St" className={inputClasses} />
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 pt-1">
+                <button onClick={() => setShowAddForm(false)} className="rounded-lg px-4 py-2 text-sm text-iv-muted hover:text-iv-text transition-colors">Cancel</button>
+                <button onClick={handleAddGeofence} disabled={gfSaving} className={btnPrimaryClasses}>
+                  {gfSaving ? <span className="flex items-center gap-2"><Loader2 size={14} className="animate-spin" />Creating...</span> : "Create Geofence"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button onClick={() => setShowAddForm(true)}
+              className="flex items-center gap-2 rounded-lg border border-dashed border-iv-border px-4 py-2.5 text-sm text-iv-muted hover:text-iv-green hover:border-iv-green/40 transition-colors w-full justify-center">
+              <Plus size={16} />
+              Add Geofence
+            </button>
+          )}
+        </div>
+      </SectionCard>
+
+      {/* Danger Zone */}
+      <SectionCard icon={Shield} title="Danger Zone">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm font-medium text-iv-text">Sign out</p>
+            <p className="text-xs text-iv-muted mt-0.5">End your current session</p>
+          </div>
+          <button onClick={logout}
+            className="flex items-center gap-2 rounded-lg bg-iv-danger/10 px-4 py-2.5 text-sm font-medium text-iv-danger transition-colors hover:bg-iv-danger/20">
+            <LogOut size={16} />
+            Logout
+          </button>
+        </div>
+      </SectionCard>
+
+      {/* Delete confirmation modal */}
+      {deleteModalId && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setDeleteModalId(null)} />
+          <div className="glass relative w-full max-w-sm rounded-2xl p-6">
+            <h2 className="text-lg font-semibold text-iv-text mb-2">Delete Vehicle</h2>
+            <p className="text-sm text-iv-muted mb-6">
+              Are you sure? All collected data will be permanently removed.
+            </p>
+            <div className="flex gap-3">
+              <button onClick={() => setDeleteModalId(null)}
+                className="flex-1 rounded-xl border border-iv-border px-4 py-2.5 text-sm font-medium text-iv-muted transition-colors hover:bg-iv-surface hover:text-iv-text">
+                Cancel
+              </button>
+              <button onClick={() => handleDeleteVehicle(deleteModalId)}
+                className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-iv-danger px-4 py-2.5 text-sm font-semibold text-white transition-all hover:bg-iv-danger/90">
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
