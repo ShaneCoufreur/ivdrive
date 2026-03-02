@@ -6,8 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [1.0.3] - 2026-03-02
+### Added
+- **Invite-Only Registration**: Implemented a "Request for Invite" system to prevent unauthorized signups.
+- **Admin Dashboard**: New Tremor-based `/admin` panel for managing user invitations, approvals, and superuser promotions.
+- **SMTP Integration**: Automated HTML invitation emails sent via Mailgun on approval.
+- **Security**: Added `is_superuser` role to the User model and protected administrative endpoints with strict superuser-only dependencies.
+
 ### Fixed
-- **Smart Polling Full Refresh**: Fixed a logic error where the 30-minute "Full Refresh" timer was reset on every lightweight poll. The system will now correctly perform a full telemetry update every 30 minutes even when the vehicle is parked.
+- **Smart Polling v2.0**: Removed the redundant 30-minute "Full Refresh" logic. The system now utilizes a strict two-path telemetry fetch (Parked vs. Active) to minimize API hits and strictly respect Skoda rate limits.
+- **App Configuration**: Updated `APP_BASE_URL` to `https://ivdrive.eu` to ensure correct registration links in emails.
 
 ## [1.0.2] - 2026-03-01
 ### Fixed

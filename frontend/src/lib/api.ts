@@ -98,7 +98,7 @@ export const api = {
     return tokens;
   },
 
-  async register(email: string, password: string, displayName?: string) {
+  async register(email: string, password: string, displayName?: string, inviteToken?: string) {
     const res = await fetch(`${API_BASE}/api/v1/auth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -106,10 +106,78 @@ export const api = {
         email,
         password,
         display_name: displayName || null,
+        invite_token: inviteToken || null,
       }),
     });
     if (!res.ok)
       throw new Error((await res.json()).detail || "Registration failed");
+    return res.json();
+  },
+
+  async getRegistrationMode(): Promise<{ mode: string }> {
+    const res = await fetch(`${API_BASE}/api/v1/auth/registration-mode`);
+    if (!res.ok) return { mode: "open" };
+    return res.json();
+  },
+
+  async requestInvite(email: string) {
+    const res = await fetch(`${API_BASE}/api/v1/auth/invite-request`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+    if (!res.ok)
+      throw new Error((await res.json()).detail || "Request failed");
+    return res.json();
+  },
+
+  // ── Admin APIs ──
+
+  async adminListInvites() {
+    const res = await apiFetch("/api/v1/admin/invites");
+    if (!res.ok) throw new Error("Failed to fetch invites");
+    return res.json();
+  },
+
+  async adminApproveInvite(email: string) {
+    const res = await apiFetch("/api/v1/admin/invites/approve", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    });
+    if (!res.ok) throw new Error((await res.json()).detail || "Approve failed");
+    return res.json();
+  },
+
+  async adminRejectInvite(email: string) {
+    const res = await apiFetch("/api/v1/admin/invites/reject", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    });
+    if (!res.ok) throw new Error((await res.json()).detail || "Reject failed");
+    return res.json();
+  },
+
+  async adminListUsers() {
+    const res = await apiFetch("/api/v1/admin/users");
+    if (!res.ok) throw new Error("Failed to fetch users");
+    return res.json();
+  },
+
+  async adminPromoteUser(email: string) {
+    const res = await apiFetch("/api/v1/admin/users/promote", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    });
+    if (!res.ok) throw new Error((await res.json()).detail || "Promote failed");
+    return res.json();
+  },
+
+  async adminDemoteUser(email: string) {
+    const res = await apiFetch("/api/v1/admin/users/demote", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    });
+    if (!res.ok) throw new Error((await res.json()).detail || "Demote failed");
     return res.json();
   },
 

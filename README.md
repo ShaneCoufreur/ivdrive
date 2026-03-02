@@ -16,7 +16,9 @@
 
 <div align="center">
 
-  **Beta** — **iVDrive is in active development.** We're improving the platform and expanding support (starting with Škoda, then other VW Group EVs).
+  **Beta** — **iVDrive is in active development.** We're currently in an invite-only beta to ensure stability as we scale. 
+
+  **Request an invite at [ivdrive.eu/register](https://ivdrive.eu/register)** to join the waitlist!
 
   **We welcome contributors, feedback, and new users!**
 
@@ -103,7 +105,13 @@ If you prefer to run the stack yourself (e.g. on your NAS):
    - Web UI: http://localhost:3035 (or your host/port).
    - API: http://localhost:8000.
 
-4. **Add your vehicle** in the UI with your Škoda Connect credentials.
+4. **Promote Admin User** (Required for Self-Hosters)
+   By default, registration is `open` on self-hosted instances. After registering your first user, promote them to superuser to access the admin panel:
+   ```bash
+   docker compose exec ivdrive-api env PYTHONPATH=/app python -m app.scripts.promote_user --email your@email.com
+   ```
+
+5. **Add your vehicle** in the UI with your Škoda Connect credentials.
 
 For more detail, see [Project overview](docs/project_overview.md) and the [docs](docs/README.md).
 

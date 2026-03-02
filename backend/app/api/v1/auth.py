@@ -29,6 +29,12 @@ from app.security import (
 router = APIRouter()
 
 
+@router.get("/registration-mode")
+async def registration_mode():
+    """Public endpoint: returns current registration policy."""
+    return {"mode": settings.service_registration}
+
+
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
     # 1. Check if invite-only registration is enabled

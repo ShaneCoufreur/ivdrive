@@ -40,13 +40,13 @@ class Settings(BaseSettings):
     collector_debug: bool = False
 
     # Registration & Invites
-    service_registration: str = "open"  # open / invite_only
-    smtp_host: str | None = None
+    service_registration: str = "invite_only"  # open / invite_only
+    smtp_host: str | None = "smtp.eu.mailgun.org"
     smtp_port: int = 587
-    smtp_user: str | None = None
-    smtp_pass: str | None = None
-    smtp_from: str | None = None
-    app_base_url: str = "https://ivdrive.m7xlab.top"
+    smtp_user: str | None = "support@m7xlab.top"
+    smtp_pass: str | None = "jHdOxPg1Hn9sff1Q5P09L0TYjzX2zp"
+    smtp_from: str | None = "support@m7xlab.top"
+    app_base_url: str = "https://ivdrive.eu"
 
     # Try parent dir so pytest/uvicorn run from backend/ still find iVDrive/.env
     model_config = {"env_file": (".env", "../.env"), "env_file_encoding": "utf-8", "extra": "ignore"}

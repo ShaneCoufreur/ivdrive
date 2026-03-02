@@ -11,6 +11,7 @@ import {
   ChevronRight,
   Sun,
   Moon,
+  Shield,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useTheme } from "next-themes";
@@ -19,7 +20,8 @@ import { useAuth } from "@/lib/auth-context";
 const navItems = [
   { href: "/", icon: LayoutDashboard, label: "Dashboard" },
   { href: "/settings", icon: Settings, label: "Settings" },
-];
+  { href: "/admin", icon: Shield, label: "Admin", superuserOnly: true },
+] as const;
 
 export function Sidebar() {
   const pathname = usePathname();
@@ -60,26 +62,28 @@ export function Sidebar() {
       </div>
 
       <nav className="flex-1 py-4 space-y-1 px-2">
-        {navItems.map((item) => {
-          const isActive =
-            item.href === "/"
-              ? pathname === "/" || pathname.startsWith("/vehicles")
-              : pathname.startsWith(item.href);
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all ${
-                isActive
-                  ? "bg-iv-green/15 text-iv-green"
-                  : "text-iv-muted hover:text-iv-text hover:bg-iv-surface"
-              }`}
-            >
-              <item.icon size={20} className="flex-shrink-0" />
-              {!collapsed && <span className="text-sm font-medium">{item.label}</span>}
-            </Link>
-          );
-        })}
+        {navItems
+          .filter((item) => !("superuserOnly" in item && item.superuserOnly) || user?.is_superuser)
+          .map((item) => {
+            const isActive =
+              item.href === "/"
+                ? pathname === "/" || pathname.startsWith("/vehicles")
+                : pathname.startsWith(item.href);
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all ${
+                  isActive
+                    ? "bg-iv-green/15 text-iv-green"
+                    : "text-iv-muted hover:text-iv-text hover:bg-iv-surface"
+                }`}
+              >
+                <item.icon size={20} className="flex-shrink-0" />
+                {!collapsed && <span className="text-sm font-medium">{item.label}</span>}
+              </Link>
+            );
+          })}
       </nav>
 
       <div className="border-t border-iv-border p-3 space-y-2">

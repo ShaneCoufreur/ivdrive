@@ -15,6 +15,7 @@ interface User {
   email: string;
   display_name: string | null;
   is_active: boolean;
+  is_superuser: boolean;
   created_at: string;
 }
 
@@ -25,7 +26,8 @@ interface AuthContextType {
   register: (
     email: string,
     password: string,
-    displayName?: string
+    displayName?: string,
+    inviteToken?: string
   ) => Promise<void>;
   logout: () => void;
   refreshUser: () => Promise<void>;
@@ -66,9 +68,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const register = async (
     email: string,
     password: string,
-    displayName?: string
+    displayName?: string,
+    inviteToken?: string
   ) => {
-    await api.register(email, password, displayName);
+    await api.register(email, password, displayName, inviteToken);
     await api.login(email, password);
     await refreshUser();
     router.push("/");
