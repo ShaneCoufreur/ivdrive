@@ -39,6 +39,15 @@ class Settings(BaseSettings):
     default_active_interval_seconds: int = 300
     collector_debug: bool = False
 
+    # Registration & Invites
+    service_registration: str = "open"  # open / invite_only
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_user: str | None = None
+    smtp_pass: str | None = None
+    smtp_from: str | None = None
+    app_base_url: str = "https://ivdrive.m7xlab.top"
+
     # Try parent dir so pytest/uvicorn run from backend/ still find iVDrive/.env
     model_config = {"env_file": (".env", "../.env"), "env_file_encoding": "utf-8", "extra": "ignore"}
 

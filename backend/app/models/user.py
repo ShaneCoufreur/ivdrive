@@ -14,6 +14,7 @@ class User(TimestampMixin, Base):
     password_hash: Mapped[str] = mapped_column(String(128), nullable=False)
     display_name: Mapped[str | None] = mapped_column(String(100))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_superuser: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     vehicles: Mapped[list["UserVehicle"]] = relationship(  # noqa: F821
         back_populates="user", cascade="all, delete-orphan", lazy="selectin"

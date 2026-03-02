@@ -14,6 +14,7 @@ from app.models.telemetry import (
     VehiclePosition,
     VehicleState,
 )
+from app.models.invite import InviteRequest
 from app.models.user import User
 from app.models.vehicle import ConnectorSession, UserVehicle
 
@@ -28,6 +29,7 @@ __all__ = [
     "DriveLevel",
     "DriveRange",
     "Geofence",
+    "InviteRequest",
     "MaintenanceReport",
     "OdometerReading",
     "Trip",

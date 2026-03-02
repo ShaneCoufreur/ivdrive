@@ -1,7 +1,7 @@
 from app.config import settings
 import os
 import json
-from app.config import settings
+import random
 from sqlalchemy.orm import selectinload
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from uuid import UUID
@@ -322,79 +322,51 @@ class DataCollector:
             now = datetime.now(UTC)
 
             try:
-                # ── SMART POLLING: Lightweight check first ──────────────────
-                # Only connection_status is fetched every cycle (1 API call).
-                # If the car is dormant (parked, not charging, no climatisation),
-                # we skip ALL heavy endpoints to conserve Skoda API quota.
+                # ══════════════════════════════════════════════════════════════
+                # SMART POLLING — Motion-Triggered approach  (v2.0)
+                #
+                # PARKED  → 1 API call  (connection_status only), save ConnectionState
+                # ACTIVE  → full fetch   (all endpoints), save everything
+                #
+                # "Active" = moving OR charging OR climatisation running.
+                # There is NO periodic full-refresh timer while parked.
+                # ══════════════════════════════════════════════════════════════
+
+                # ── Step 1: Connection status (always, 1 API call) ──────────
                 conn_resp = await _safe(api.get_connection_status(vin), "connection_status", user_vehicle_id)
 
                 is_online = conn_resp and not conn_resp.unreachable
                 is_moving = conn_resp and (conn_resp.in_motion or conn_resp.ignition_on)
 
-                # Base variables
-                charging = None
-                driving = None
-                status_resp = None
-                position = None
-                ac_resp = None
-                maint_resp = None
-                warning_lights_resp = None
-                temp_c = None
-                weather_code = None
-                elevation_m = None
-                did_full_fetch = False
-
-                # Determine how long since the last full data fetch
-                last_full_fetch = cs.last_fetch_at
-                full_fetch_stale = (
-                    last_full_fetch is None
-                    or (now - last_full_fetch) > timedelta(minutes=30)
-                )
-
-                # If car is offline and not moving → dormant check
-                if not is_moving and not is_online and not full_fetch_stale:
-                    # Car is deeply asleep. Save only the connection state and bail out.
-                    session.add(ConnectionState(
-                        user_vehicle_id=user_vehicle_id,
-                        captured_at=now,
-                        is_online=False,
-                        in_motion=False,
-                        ignition_on=conn_resp.ignition_on if conn_resp else None,
-                    ))
-                    cs.status = "active"
-                    await session.commit()
-                    logger.info(
-                        "Smart poll: vehicle %s is dormant (offline, parked). "
-                        "Skipped heavy endpoints. Next full fetch after %s.",
-                        user_vehicle_id,
-                        last_full_fetch + timedelta(minutes=30) if last_full_fetch else "now",
-                    )
-                    return
-
-                # Car is either online, moving, or we need a periodic full refresh.
-                # Fetch charging to decide activity level (2nd API call).
-                charging = await _safe(api.get_charging(vin), "charging", user_vehicle_id)
-                is_charging = (
-                    charging and charging.status
-                    and charging.status.state == "CHARGING"
-                )
-
-                # If car is online but parked, not charging → check AC before deciding
-                # We peek at AC only if car is stationary to detect remote climatisation
+                # ── Step 2: Determine activity ──────────────────────────────
+                # If clearly moving we can skip the charging/AC probes.
+                is_charging = False
                 is_ac_on = False
-                if not is_moving and not is_charging:
-                    ac_resp = await _safe(api.get_air_conditioning(vin), "air_conditioning", user_vehicle_id)
-                    is_ac_on = ac_resp and ac_resp.state and ac_resp.state.upper() in ("ON", "HEATING", "COOLING", "VENTILATION")
+                charging = None
+                ac_resp = None
 
-                # Final decision: is the car "active"?
+                if not is_moving:
+                    # Not moving — check charging (2nd API call)
+                    charging = await _safe(api.get_charging(vin), "charging", user_vehicle_id)
+                    is_charging = (
+                        charging and charging.status
+                        and charging.status.state == "CHARGING"
+                    )
+
+                    if not is_charging:
+                        # Not moving, not charging — check AC (3rd API call)
+                        ac_resp = await _safe(api.get_air_conditioning(vin), "air_conditioning", user_vehicle_id)
+                        is_ac_on = (
+                            ac_resp is not None
+                            and ac_resp.state is not None
+                            and ac_resp.state.upper() in ("ON", "HEATING", "COOLING", "VENTILATION")
+                        )
+
                 car_active = is_moving or is_charging or is_ac_on
 
-                # ── Smart Polling: dynamic interval rescheduling ──
+                # ── Step 3: Dynamic interval rescheduling ───────────────────
                 job_id = f"collect_{user_vehicle_id}"
-                if car_active:
-                    desired_interval = vehicle.active_interval_seconds
-                else:
-                    desired_interval = vehicle.parked_interval_seconds
+                desired_interval = vehicle.active_interval_seconds if car_active else vehicle.parked_interval_seconds
                 current_interval = self._get_job_interval_seconds(job_id)
                 if current_interval and current_interval != desired_interval:
                     self._scheduler.reschedule_job(job_id, trigger='interval', seconds=desired_interval)
@@ -403,50 +375,57 @@ class DataCollector:
                         user_vehicle_id, current_interval, desired_interval, car_active,
                     )
 
-                if not car_active and not full_fetch_stale:
-                    # Car is online but idle. Save lightweight data only.
-                    # We already have conn_resp and charging — store those.
+                # ── Step 4: PARKED — save connection only, bail out ─────────
+                if not car_active:
+                    session.add(ConnectionState(
+                        user_vehicle_id=user_vehicle_id,
+                        captured_at=now,
+                        is_online=is_online,
+                        in_motion=False,
+                        ignition_on=conn_resp.ignition_on if conn_resp else None,
+                    ))
+                    cs.status = "active"
+                    await session.commit()
                     logger.info(
-                        "Smart poll: vehicle %s is online but idle (parked, not charging, AC off). "
-                        "Saving lightweight data only. Full refresh in ~%d min.",
-                        user_vehicle_id,
-                        max(0, int(30 - (now - last_full_fetch).total_seconds() / 60)) if last_full_fetch else 0,
+                        "Smart poll: vehicle %s is PARKED (online=%s). "
+                        "Saved ConnectionState only, skipped all heavy endpoints.",
+                        user_vehicle_id, is_online,
                     )
-                    # Fall through to save charging/connection state below,
-                    # but skip driving_range, position, status, maintenance, warning_lights
-                else:
-                    # Car is ACTIVE or we need a periodic full refresh → fetch everything
-                    did_full_fetch = True
-                    if car_active:
-                        logger.info(
-                            "Smart poll: vehicle %s is ACTIVE (moving=%s, charging=%s, ac=%s). Full fetch.",
-                            user_vehicle_id, is_moving, is_charging, is_ac_on,
-                        )
-                    else:
-                        logger.info(
-                            "Smart poll: vehicle %s periodic full refresh (last full: %s).",
-                            user_vehicle_id, last_full_fetch,
-                        )
+                    return
 
-                    driving = await _safe(api.get_driving_range(vin), "driving_range", user_vehicle_id)
-                    position = await _safe(api.get_position(vin), "position", user_vehicle_id)
-                    status_resp = await _safe(api.get_vehicle_status(vin), "vehicle_status", user_vehicle_id)
-                    if is_moving or is_charging:
-                        # Only fetch these when truly active (not just periodic refresh)
-                        if not ac_resp:
-                            ac_resp = await _safe(api.get_air_conditioning(vin), "air_conditioning", user_vehicle_id)
-                    maint_resp = await _safe(api.get_maintenance(vin), "maintenance", user_vehicle_id)
-                    warning_lights_resp = await _safe(api.get_warning_lights(vin), "warning_lights", user_vehicle_id)
+                # ══════════════════════════════════════════════════════════════
+                # Step 5: ACTIVE — Full fetch of all endpoints
+                # ══════════════════════════════════════════════════════════════
+                logger.info(
+                    "Smart poll: vehicle %s is ACTIVE (moving=%s, charging=%s, ac=%s). Full fetch.",
+                    user_vehicle_id, is_moving, is_charging, is_ac_on,
+                )
 
-                    if position and position.positions:
-                        for pos in position.positions:
-                            if pos.type == "VEHICLE" and pos.gps_coordinates:
-                                lat = pos.gps_coordinates.latitude
-                                lon = pos.gps_coordinates.longitude
-                                if lat and lon:
-                                    temp_c, weather_code, elevation_m = await fetch_weather_and_elevation(lat, lon)
-                                break
-                
+                # Fetch charging if we didn't already (car was detected moving in step 2)
+                if charging is None:
+                    charging = await _safe(api.get_charging(vin), "charging", user_vehicle_id)
+
+                driving = await _safe(api.get_driving_range(vin), "driving_range", user_vehicle_id)
+                position = await _safe(api.get_position(vin), "position", user_vehicle_id)
+                status_resp = await _safe(api.get_vehicle_status(vin), "vehicle_status", user_vehicle_id)
+                if not ac_resp:
+                    ac_resp = await _safe(api.get_air_conditioning(vin), "air_conditioning", user_vehicle_id)
+                maint_resp = await _safe(api.get_maintenance(vin), "maintenance", user_vehicle_id)
+                warning_lights_resp = await _safe(api.get_warning_lights(vin), "warning_lights", user_vehicle_id)
+
+                # Weather & elevation for position enrichment
+                temp_c = None
+                weather_code = None
+                elevation_m = None
+                if position and position.positions:
+                    for pos in position.positions:
+                        if pos.type == "VEHICLE" and pos.gps_coordinates:
+                            lat = pos.gps_coordinates.latitude
+                            lon = pos.gps_coordinates.longitude
+                            if lat and lon:
+                                temp_c, weather_code, elevation_m = await fetch_weather_and_elevation(lat, lon)
+                            break
+
                 if os.environ.get("COLLECTOR_DEBUG", "false").lower() == "true":
                     summary = _debug_summary(charging, driving, conn_resp)
                     logger.debug(
@@ -455,9 +434,17 @@ class DataCollector:
                         json.dumps(summary, default=str),
                     )
 
-                # --- Warning lights ---
-                if warning_lights_resp and "warningLights" in warning_lights_resp:
-                    vehicle.warning_lights = warning_lights_resp.get("warningLights", [])
+                # ── Persist all telemetry ───────────────────────────────────
+
+                # --- Connection status ---
+                if conn_resp:
+                    session.add(ConnectionState(
+                        user_vehicle_id=user_vehicle_id,
+                        captured_at=now,
+                        is_online=not conn_resp.unreachable if conn_resp.unreachable is not None else None,
+                        in_motion=conn_resp.in_motion,
+                        ignition_on=conn_resp.ignition_on,
+                    ))
 
                 # --- Charging state ---
                 if charging and charging.status:
@@ -478,7 +465,12 @@ class DataCollector:
                         cs_data["remaining_range_m"] = charging.status.battery.remaining_cruising_range_in_meters
                     session.add(ChargingState(**cs_data))
 
+                # --- Warning lights ---
+                if warning_lights_resp and "warningLights" in warning_lights_resp:
+                    vehicle.warning_lights = warning_lights_resp.get("warningLights", [])
+
                 # --- Driving range ---
+                drive_obj = None
                 if driving and driving.primary_engine_range:
                     eng = driving.primary_engine_range
                     drive_obj = Drive(
@@ -539,9 +531,9 @@ class DataCollector:
                                 captured_at=now,
                                 latitude=pos.gps_coordinates.latitude,
                                 longitude=pos.gps_coordinates.longitude,
-                                elevation_m=elevation_m if is_moving or is_charging else None,
-                                outside_temp_celsius=temp_c if is_moving or is_charging else None,
-                                weather_condition=weather_code if is_moving or is_charging else None,
+                                elevation_m=elevation_m,
+                                outside_temp_celsius=temp_c,
+                                weather_condition=weather_code,
                             ))
                             break
 
@@ -581,34 +573,18 @@ class DataCollector:
                             mileage_in_km=maint_resp.mileage_in_km,
                         ))
 
-                # --- Connection status ---
-                if conn_resp:
-                    session.add(ConnectionState(
-                        user_vehicle_id=user_vehicle_id,
-                        captured_at=now,
-                        is_online=not conn_resp.unreachable if conn_resp.unreachable is not None else None,
-                        in_motion=conn_resp.in_motion,
-                        ignition_on=conn_resp.ignition_on,
-                    ))
-
-                
-                # --- NEW METRICS: BatteryHealth, PowerUsage, ChargingCurve ---
-                import random
-                
-                # We will simulate the deeper 200+ metrics based on available top-level data
-                # because Skoda API doesn't expose all cell voltages directly.
-                
+                # --- Simulated metrics: BatteryHealth, PowerUsage, ChargingCurve ---
                 base_soc = 50.0
                 if driving and driving.primary_engine_range and driving.primary_engine_range.current_so_c_in_percent is not None:
                     base_soc = float(driving.primary_engine_range.current_so_c_in_percent)
-                
+
                 battery_temp = 20.0
                 if temp_c is not None:
-                    battery_temp = temp_c + 5.0  # Slightly warmer than outside
+                    battery_temp = temp_c + 5.0
                 elif is_charging:
                     battery_temp = 35.0
-                    
-                bh = BatteryHealth(
+
+                session.add(BatteryHealth(
                     user_vehicle_id=user_vehicle_id,
                     captured_at=now,
                     twelve_v_battery_voltage=12.1 + random.uniform(0, 0.6) if not is_moving else 14.4 + random.uniform(-0.1, 0.1),
@@ -625,23 +601,21 @@ class DataCollector:
                     cell_temperature_min=battery_temp - 1.0,
                     cell_temperature_max=battery_temp + 2.0,
                     cell_temperature_avg=battery_temp,
-                    imbalance_mv=random.uniform(5, 25)
-                )
-                session.add(bh)
-                
-                pu = PowerUsage(
+                    imbalance_mv=random.uniform(5, 25),
+                ))
+
+                session.add(PowerUsage(
                     user_vehicle_id=user_vehicle_id,
                     captured_at=now,
-                    total_power_kw=random.uniform(0, 50) if is_moving else (random.uniform(1, 3) if ac_resp and ac_resp.state == "ON" else 0.0),
+                    total_power_kw=random.uniform(0, 50) if is_moving else (random.uniform(1, 3) if is_ac_on else 0.0),
                     motor_power_kw=random.uniform(0, 45) if is_moving else 0.0,
-                    hvac_power_kw=random.uniform(1, 4) if ac_resp and ac_resp.state == "ON" else 0.0,
+                    hvac_power_kw=random.uniform(1, 4) if is_ac_on else 0.0,
                     auxiliary_power_kw=random.uniform(0.2, 0.5),
-                    battery_heater_power_kw=random.uniform(1, 5) if is_charging and battery_temp < 15 else 0.0
-                )
-                session.add(pu)
-                
+                    battery_heater_power_kw=random.uniform(1, 5) if is_charging and battery_temp < 15 else 0.0,
+                ))
+
                 if is_charging and charging and charging.status:
-                    cc = ChargingCurve(
+                    session.add(ChargingCurve(
                         user_vehicle_id=user_vehicle_id,
                         captured_at=now,
                         soc_pct=base_soc,
@@ -649,24 +623,19 @@ class DataCollector:
                         voltage_v=380.0 + (base_soc * 0.4),
                         current_a=(charging.status.charge_power_in_kw or 50) * 1000 / (380.0 + (base_soc * 0.4)),
                         battery_temp_celsius=battery_temp,
-                        charger_temp_celsius=battery_temp + random.uniform(5, 10)
-                    )
-                    session.add(cc)
+                        charger_temp_celsius=battery_temp + random.uniform(5, 10),
+                    ))
 
-                # -------------------------------------------------------------
-
-                
-                # --- LEGACY GRAFANA METRICS (ChargingPower, ClimatizationState, etc) ---
+                # --- Legacy Grafana metrics ---
                 if is_charging and charging and charging.status and charging.status.charge_power_in_kw is not None:
                     session.add(ChargingPower(
                         user_vehicle_id=user_vehicle_id,
                         first_date=now,
                         last_date=now,
-                        power=charging.status.charge_power_in_kw
+                        power=charging.status.charge_power_in_kw,
                     ))
-                    
+
                 if driving and driving.primary_engine_range and driving.total_range_in_km is not None:
-                    # Simulation: Range at 100% based on current SoC and remaining range
                     soc = float(driving.primary_engine_range.current_so_c_in_percent or 100)
                     if soc > 0 and drive_obj:
                         est_full = float(driving.total_range_in_km) / (soc / 100.0)
@@ -674,14 +643,13 @@ class DataCollector:
                             drive_id=drive_obj.id,
                             first_date=now,
                             last_date=now,
-                            range_estimated_full=est_full
+                            range_estimated_full=est_full,
                         ))
-                        # Simulated consumption
                         session.add(DriveConsumption(
                             drive_id=drive_obj.id,
                             first_date=now,
                             last_date=now,
-                            consumption=16.5 + random.uniform(-2, 3)
+                            consumption=16.5 + random.uniform(-2, 3),
                         ))
 
                 if ac_resp and ac_resp.state:
@@ -689,7 +657,7 @@ class DataCollector:
                         user_vehicle_id=user_vehicle_id,
                         first_date=now,
                         last_date=now,
-                        state=ac_resp.state
+                        state=ac_resp.state,
                     ))
 
                 if temp_c is not None:
@@ -697,33 +665,30 @@ class DataCollector:
                         user_vehicle_id=user_vehicle_id,
                         first_date=now,
                         last_date=now,
-                        outside_temperature=temp_c
+                        outside_temperature=temp_c,
                     ))
-                    
+
                 session.add(BatteryTemperature(
                     user_vehicle_id=user_vehicle_id,
                     first_date=now,
                     last_date=now,
-                    battery_temperature=battery_temp
+                    battery_temperature=battery_temp,
                 ))
-                
-                # Mock a Weconnect Error with 1% chance for grafana panel
+
                 if random.random() < 0.01:
                     session.add(WeconnectError(
                         user_vehicle_id=user_vehicle_id,
                         datetime=now,
-                        error_text="Simulated Weconnect Error"
+                        error_text="Simulated Weconnect Error",
                     ))
-                # -------------------------------------------------------------------
 
-                if did_full_fetch:
-                    cs.last_fetch_at = now
+                # ── Commit & update timestamp ───────────────────────────────
+                cs.last_fetch_at = now
                 cs.status = "active"
                 await session.commit()
-                logger.info("Collection complete for vehicle %s", user_vehicle_id)
-                
-                # Asynchronously trigger analytics and trip/charging calculations in the background
-                # This ensures we don't block the collector loop while crunching numbers.
+                logger.info("Collection complete for vehicle %s (ACTIVE full fetch)", user_vehicle_id)
+
+                # Async analytics in background
                 task = asyncio.create_task(process_completed_trips_and_charges(user_vehicle_id))
                 self._background_tasks.add(task)
                 task.add_done_callback(self._handle_task_result)
