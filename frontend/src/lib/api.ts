@@ -112,16 +112,28 @@ export const api = {
     return tokens;
   },
 
+  async verifyRecoveryCode(token2FA: string, recoveryCode: string) {
+    const res = await fetch(`${API_BASE}/api/v1/auth/login/verify-recovery-code`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ "2fa_token": token2FA, recovery_code: recoveryCode }),
+    });
+    if (!res.ok) throw new Error((await res.json()).detail || "Recovery code verification failed");
+    const tokens: TokenPair = await res.json();
+    setTokens(tokens);
+    return tokens;
+  },
+
   async setup2FA() {
     const res = await apiFetch("/api/v1/auth/2fa/setup", { method: "POST" });
     if (!res.ok) throw new Error("Failed to start 2FA setup");
     return res.json();
   },
 
-  async enable2FA(code: string) {
+  async enable2FA(data: { code: string; secret: string; recovery_codes: string[] }) {
     const res = await apiFetch("/api/v1/auth/2fa/enable", {
       method: "POST",
-      body: JSON.stringify({ code }),
+      body: JSON.stringify(data),
     });
     if (!res.ok) throw new Error((await res.json()).detail || "Failed to enable 2FA");
     return res.json();

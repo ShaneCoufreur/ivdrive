@@ -24,6 +24,7 @@ interface AuthContextType {
   loading: boolean;
   login: (email: string, password: string) => Promise<any>;
   verify2FA: (token2FA: string, code: string) => Promise<void>;
+  verifyRecoveryCode: (token2FA: string, code: string) => Promise<void>;
   register: (
     email: string,
     password: string,
@@ -76,6 +77,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     router.push("/");
   };
 
+  const verifyRecoveryCode = async (token2FA: string, code: string) => {
+    await api.verifyRecoveryCode(token2FA, code);
+    await refreshUser();
+    router.push("/");
+  };
+
   const register = async (
     email: string,
     password: string,
@@ -96,7 +103,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{ user, loading, login, verify2FA, register, logout, refreshUser }}
+      value={{
+        user,
+        loading,
+        login,
+        verify2FA,
+        verifyRecoveryCode,
+        register,
+        logout,
+        refreshUser,
+      }}
     >
       {children}
     </AuthContext.Provider>
