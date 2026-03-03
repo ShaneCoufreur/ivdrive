@@ -1,6 +1,7 @@
 import uuid
-
-from fastapi import APIRouter, Depends, HTTPException, status
+import os
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,9 +10,38 @@ from app.database import get_db
 from app.models.geofence import Geofence
 from app.models.user import User
 from app.schemas.geofence import GeofenceCreate, GeofenceResponse, GeofenceUpdate
+from app.services.export import ExportService
 
 router = APIRouter()
 
+# ── Data Export ─────────────────────────────────────────────────────────────
+
+@router.post("/export", status_code=status.HTTP_202_ACCEPTED)
+async def request_data_export(
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Triggers a 1-year data export for the user.
+    In a real-world scenario, this would be a background task.
+    For this implementation, we will generate it synchronously to provide 
+    an immediate download link in the first version.
+    """
+    service = ExportService(db)
+    zip_path = await service.generate_user_export(user.id)
+    
+    if not zip_path:
+        raise HTTPException(status_code=404, detail="No vehicle data found to export")
+    
+    # We return the file directly for now. 
+    # In Phase 2, this will be handled via status polling.
+    return FileResponse(
+        path=zip_path,
+        filename=os.path.basename(zip_path),
+        media_type="application/zip"
+    )
+
+# ── Geofences ───────────────────────────────────────────────────────────────
 
 @router.get("/geofences", response_model=list[GeofenceResponse])
 async def list_geofences(

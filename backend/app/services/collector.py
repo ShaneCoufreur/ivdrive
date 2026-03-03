@@ -60,6 +60,11 @@ class DataCollector:
         self._scheduler = AsyncIOScheduler()
         self._background_tasks: set = set()
         self._stale_active_counters: dict[UUID, int] = {}  # Tracks extra polls after car stops being "active"
+        # Smart Polling v2.3: tracks last known online/offline state per vehicle so we can
+        # skip writing a ConnectionState record when nothing changed (avoids thousands of
+        # identical rows while the car sits parked overnight).
+        # None = unknown (first poll after startup → always write the initial record).
+        self._last_connection_state: dict[UUID, bool | None] = {}
 
     async def start(self) -> None:
         registered = 0
@@ -336,10 +341,14 @@ class DataCollector:
 
             try:
                 # ══════════════════════════════════════════════════════════════
-                # SMART POLLING — Motion-Triggered approach  (v2.0)
+                # SMART POLLING — Motion-Triggered approach  (v2.3)
                 #
-                # PARKED  → 1 API call  (connection_status only), save ConnectionState
+                # PARKED  → 1 API call  (connection_status only)
+                #           ConnectionState only written when online/offline status CHANGES
+                #           (prevents thousands of identical rows while car sleeps overnight)
                 # ACTIVE  → full fetch   (all endpoints), save everything
+                #           Interval switches to active_interval_seconds IMMEDIATELY when
+                #           any of the 3 lightweight probes detect activity.
                 #
                 # "Active" = moving OR charging OR climatisation running.
                 # There is NO periodic full-refresh timer while parked.
@@ -351,6 +360,12 @@ class DataCollector:
                 is_online = conn_resp and not conn_resp.unreachable
                 is_moving = conn_resp and (conn_resp.in_motion or conn_resp.ignition_on)
 
+                # DEBUG LOG for transition tracking
+                logger.info(
+                    "Smart poll: vehicle %s status check [online=%s, moving=%s, stale_count=%d]",
+                    user_vehicle_id, is_online, is_moving, self._stale_active_counters.get(user_vehicle_id, 0)
+                )
+
                 # ── Step 2: Determine activity ──────────────────────────────
                 # If clearly moving we can skip the charging/AC probes.
                 is_charging = False
@@ -358,22 +373,25 @@ class DataCollector:
                 charging = None
                 ac_resp = None
 
-                if not is_moving:
-                    # Not moving — check charging (2nd API call)
-                    charging = await _safe(api.get_charging(vin), "charging", user_vehicle_id)
-                    is_charging = (
-                        charging and charging.status
-                        and charging.status.state == "CHARGING"
-                    )
-
-                    if not is_charging:
-                        # Not moving, not charging — check AC (3rd API call)
-                        ac_resp = await _safe(api.get_air_conditioning(vin), "air_conditioning", user_vehicle_id)
-                        is_ac_on = (
-                            ac_resp is not None
-                            and ac_resp.state is not None
-                            and ac_resp.state.upper() in ("ON", "HEATING", "COOLING", "VENTILATION")
+                # Only check secondary status if the car is online.
+                # If car is offline/unreachable, it cannot be charging or climatizing via API.
+                if is_online:
+                    if not is_moving:
+                        # Not moving — check charging (2nd API call)
+                        charging = await _safe(api.get_charging(vin), "charging", user_vehicle_id)
+                        is_charging = (
+                            charging and charging.status
+                            and charging.status.state == "CHARGING"
                         )
+
+                        if not is_charging:
+                            # Not moving, not charging — check AC (3rd API call)
+                            ac_resp = await _safe(api.get_air_conditioning(vin), "air_conditioning", user_vehicle_id)
+                            is_ac_on = (
+                                ac_resp is not None
+                                and ac_resp.state is not None
+                                and ac_resp.state.upper() in ("ON", "HEATING", "COOLING", "VENTILATION")
+                            )
 
                 car_active = is_moving or is_charging or is_ac_on
 
@@ -398,6 +416,10 @@ class DataCollector:
                         self._stale_active_counters.pop(user_vehicle_id, None)
 
                 # ── Step 4: Dynamic interval rescheduling ───────────────────
+                # v2.3: When activity is first detected (Parked → Active transition), the
+                # interval switches immediately here so the NEXT scheduler tick already
+                # fires at active_interval_seconds.  The full fetch below runs in the
+                # current cycle, so there is zero lag on the first active collection.
                 job_id = f"collect_{user_vehicle_id}"
                 desired_interval = vehicle.active_interval_seconds if car_active else vehicle.parked_interval_seconds
                 current_interval = self._get_job_interval_seconds(job_id)
@@ -408,22 +430,39 @@ class DataCollector:
                         user_vehicle_id, current_interval, desired_interval, car_active,
                     )
 
-                # ── Step 4: PARKED — save connection only, bail out ─────────
+                # ── Step 5: PARKED — conditionally save connection state, bail out ─
+                # v2.3: Only write a ConnectionState row when the online/offline status
+                # has actually changed since the last poll.  This prevents the table from
+                # accumulating thousands of identical rows while the car sleeps overnight.
+                # On the very first poll after a collector restart (cache is empty) we
+                # always write so the DB reflects current reality.
                 if not car_active:
-                    session.add(ConnectionState(
-                        user_vehicle_id=user_vehicle_id,
-                        captured_at=now,
-                        is_online=is_online,
-                        in_motion=False,
-                        ignition_on=conn_resp.ignition_on if conn_resp else None,
-                    ))
-                    cs.status = "active"
-                    await session.commit()
-                    logger.info(
-                        "Smart poll: vehicle %s is PARKED (online=%s). "
-                        "Saved ConnectionState only, skipped all heavy endpoints.",
-                        user_vehicle_id, is_online,
-                    )
+                    last_known = self._last_connection_state.get(user_vehicle_id)
+                    state_changed = (last_known is None) or (last_known != is_online)
+
+                    if state_changed:
+                        session.add(ConnectionState(
+                            user_vehicle_id=user_vehicle_id,
+                            captured_at=now,
+                            is_online=is_online,
+                            in_motion=False,
+                            ignition_on=conn_resp.ignition_on if conn_resp else None,
+                        ))
+                        self._last_connection_state[user_vehicle_id] = is_online
+                        cs.status = "active"
+                        await session.commit()
+                        logger.info(
+                            "Smart poll: vehicle %s PARKED — state changed (was=%s → now online=%s). "
+                            "ConnectionState saved.",
+                            user_vehicle_id, last_known, is_online,
+                        )
+                    else:
+                        # No state change → nothing to persist; skip DB round-trip entirely.
+                        logger.debug(
+                            "Smart poll: vehicle %s PARKED (online=%s, unchanged). "
+                            "Skipping DB write.",
+                            user_vehicle_id, is_online,
+                        )
                     return
 
                 # ══════════════════════════════════════════════════════════════
@@ -470,6 +509,9 @@ class DataCollector:
                 # ── Persist all telemetry ───────────────────────────────────
 
                 # --- Connection status ---
+                # Always written during an ACTIVE cycle (we want the full picture in the DB).
+                # Also update the in-memory cache so the parked-state dedup logic stays
+                # accurate across Active → Parked transitions.
                 if conn_resp:
                     session.add(ConnectionState(
                         user_vehicle_id=user_vehicle_id,
@@ -478,6 +520,7 @@ class DataCollector:
                         in_motion=conn_resp.in_motion,
                         ignition_on=conn_resp.ignition_on,
                     ))
+                    self._last_connection_state[user_vehicle_id] = is_online
 
                 # --- Charging state ---
                 if charging and charging.status:

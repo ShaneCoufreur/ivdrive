@@ -1,3 +1,4 @@
+from app.models.announcement import Announcement, UserAnnouncement
 from app.models.base import Base
 from app.models.geofence import Geofence
 from app.models.telemetry import (
@@ -19,6 +20,7 @@ from app.models.user import User
 from app.models.vehicle import ConnectorSession, UserVehicle
 
 __all__ = [
+    "Announcement",
     "AirConditioningState",
     "Base",
     "ChargingSession",
@@ -34,6 +36,7 @@ __all__ = [
     "OdometerReading",
     "Trip",
     "User",
+    "UserAnnouncement",
     "UserVehicle",
     "VehiclePosition",
     "VehicleState",

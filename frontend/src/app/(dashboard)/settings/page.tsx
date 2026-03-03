@@ -16,6 +16,9 @@ import {
   Timer,
   Wifi,
   WifiOff,
+  Download,
+  Upload,
+  Database,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { api } from "@/lib/api";
@@ -118,6 +121,8 @@ export default function SettingsPage() {
   const [showDeleteAccountModal, setShowDeleteAccountModal] = useState(false);
   const [deleteAccountConfirmText, setDeleteAccountConfirmText] = useState("");
   const [accountDeleting, setAccountDeleting] = useState(false);
+
+  const [exporting, setExporting] = useState(false);
 
   const [is2FASettingLoading, setIs2FASettingLoading] = useState(false);
   const [show2FASetup, setShow2FASetup] = useState(false);
@@ -263,6 +268,26 @@ export default function SettingsPage() {
     } catch (err) {
       showToast("error", err instanceof Error ? err.message : "Failed to delete account");
       setAccountDeleting(false);
+    }
+  };
+
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      const blob = await api.exportUserData();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `ivdrive_export_${new Date().toISOString().split("T")[0]}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      showToast("success", "Export completed! Your data is ready.");
+    } catch (err) {
+      showToast("error", err instanceof Error ? err.message : "Failed to generate export");
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -635,6 +660,45 @@ export default function SettingsPage() {
               Add Geofence
             </button>
           )}
+        </div>
+      </SectionCard>
+
+      {/* Data Sovereignty */}
+      <SectionCard icon={Database} title="Data & Privacy">
+        <div className="space-y-4">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex-1">
+              <p className="text-sm font-medium text-iv-text">Extract My Data</p>
+              <p className="text-xs text-iv-muted mt-1 leading-relaxed">
+                Download a full snapshot of your vehicle telemetry from the last 12 months. 
+                This ZIP file contains a standardized JSON format that can be imported into self-hosted iVDrive instances.
+              </p>
+            </div>
+            <button
+              onClick={handleExport}
+              disabled={exporting}
+              className="flex items-center gap-2 rounded-lg bg-iv-cyan/10 px-4 py-2.5 text-sm font-medium text-iv-cyan transition-colors hover:bg-iv-cyan/20 disabled:opacity-50"
+            >
+              {exporting ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
+              {exporting ? "Exporting..." : "Export"}
+            </button>
+          </div>
+          
+          <div className="flex items-start justify-between gap-4 border-t border-iv-border pt-4">
+            <div className="flex-1">
+              <p className="text-sm font-medium text-iv-text">Restore from Snapshot</p>
+              <p className="text-xs text-iv-muted mt-1 leading-relaxed">
+                Coming soon: Import your historical data from a previously exported ZIP file.
+              </p>
+            </div>
+            <button
+              disabled
+              className="flex items-center gap-2 rounded-lg bg-iv-surface border border-iv-border px-4 py-2.5 text-sm font-medium text-iv-muted cursor-not-allowed"
+            >
+              <Upload size={16} />
+              Import
+            </button>
+          </div>
         </div>
       </SectionCard>
 

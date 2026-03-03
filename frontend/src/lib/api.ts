@@ -231,10 +231,85 @@ export const api = {
     return res.json();
   },
 
+  async adminDeleteUser(id: string) {
+    const res = await apiFetch(`/api/v1/admin/users/${id}`, { method: "DELETE" });
+    if (!res.ok) throw new Error((await res.json()).detail || "Delete user failed");
+  },
+
+  async adminDeleteInvite(id: string) {
+    const res = await apiFetch(`/api/v1/admin/invites/${id}`, { method: "DELETE" });
+    if (!res.ok) throw new Error((await res.json()).detail || "Delete invite failed");
+  },
+
+  async adminResendInvite(email: string) {
+    const res = await apiFetch("/api/v1/admin/invites/resend", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    });
+    if (!res.ok) throw new Error((await res.json()).detail || "Resend failed");
+    return res.json();
+  },
+
+  // ── Announcement Admin APIs ──
+
+  async adminCreateAnnouncement(data: {
+    title: string;
+    message: string;
+    type: "info" | "success" | "warning" | "critical";
+    expires_at?: string | null;
+  }) {
+    const res = await apiFetch("/api/v1/admin/announcements", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error((await res.json()).detail || "Failed to create announcement");
+    return res.json();
+  },
+
+  async adminListAnnouncements() {
+    const res = await apiFetch("/api/v1/admin/announcements");
+    if (!res.ok) throw new Error("Failed to fetch announcements");
+    return res.json();
+  },
+
+  async adminDeleteAnnouncement(id: string) {
+    const res = await apiFetch(`/api/v1/admin/announcements/${id}`, { method: "DELETE" });
+    if (!res.ok) throw new Error((await res.json()).detail || "Failed to delete announcement");
+  },
+
+  // ── User Announcement APIs ──
+
+  async getUserAnnouncements() {
+    const res = await apiFetch("/api/v1/notifications/announcements/active");
+    if (!res.ok) return [];
+    return res.json();
+  },
+
+  async dismissAnnouncement(id: string) {
+    const res = await apiFetch(`/api/v1/notifications/announcements/${id}/dismiss`, {
+      method: "POST",
+    });
+    if (!res.ok) throw new Error((await res.json()).detail || "Failed to dismiss");
+    return res.json();
+  },
+
   async getMe() {
     const res = await apiFetch("/api/v1/auth/me");
     if (!res.ok) throw new Error("Not authenticated");
     return res.json();
+  },
+
+  // ── Data Management ──
+
+  async exportUserData() {
+    const res = await apiFetch("/api/v1/settings/export", {
+      method: "POST",
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Failed to start export");
+    }
+    return res.blob();
   },
 
   async updateMe(data: { display_name?: string }) {

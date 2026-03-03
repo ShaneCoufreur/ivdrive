@@ -5,6 +5,18 @@ All notable changes to the iVDrive project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.6] - 2026-03-03
+### Added
+- **Data Sovereignty (Extract My Data)**: Users can now export 1 year of historical telemetry (drives, charging, etc.) as a ZIP-compressed JSON (v1.0) for migration to self-hosted instances.
+- **Announcement System**: Implemented a platform-wide notification engine for administrators to broadcast features and updates to users.
+- **Notification Persistence**: New Alembic migrations and models to store user-specific notification states (read/unread/dismissed).
+
+### Fixed
+- **Alembic Versioning**: Resolved "Multiple head revisions" migration conflict, linearizing the database schema history.
+- **Export Engine**: Fixed 500 errors caused by VIN decryption logic and SQL type mismatches between telemetry tables.
+- **CORS Headers**: Explicitly exposed `Content-Disposition` in middleware to enable browser-initiated file downloads from the API.
+- **Smart Polling v2.3**: Optimized the collector by caching connection states, significantly reducing redundant DB I/O during vehicle polling.
+
 ## [1.0.5] - 2026-03-02
 ### Added
 - **Manual WLTP Override**: New input field in "Add Vehicle" and "Vehicle Settings" to manually set WLTP Range (km), bypassing Skoda API omissions.

@@ -20,6 +20,11 @@ import {
   Inbox,
   Copy,
   Check,
+  Trash2,
+  Send,
+  Bell,
+  PlusCircle,
+  Info,
 } from "lucide-react";
 
 // ── Types ──
@@ -41,7 +46,17 @@ interface AdminUser {
   created_at: string | null;
 }
 
-type Tab = "invites" | "users";
+interface Announcement {
+  id: string;
+  title: string;
+  message: string;
+  type: "info" | "success" | "warning" | "critical";
+  created_at: string;
+  expires_at: string | null;
+  is_active: boolean;
+}
+
+type Tab = "invites" | "users" | "announcements";
 
 // ── Helpers ──
 
@@ -98,10 +113,20 @@ export default function AdminPage() {
   const [tab, setTab] = useState<Tab>("invites");
   const [invites, setInvites] = useState<InviteRequest[]>([]);
   const [users, setUsers] = useState<AdminUser[]>([]);
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [toast, setToast] = useState<{ msg: string; type: "ok" | "err" } | null>(null);
   const [copiedLink, setCopiedLink] = useState<string | null>(null);
+
+  // Announcement form state
+  const [annForm, setAnnForm] = useState({
+    title: "",
+    message: "",
+    type: "info" as "info" | "success" | "warning" | "critical",
+    expires_at: "",
+  });
+  const [annFormLoading, setAnnFormLoading] = useState(false);
 
   const showToast = (msg: string, type: "ok" | "err" = "ok") => {
     setToast({ msg, type });
@@ -111,12 +136,14 @@ export default function AdminPage() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [inv, usr] = await Promise.all([
+      const [inv, usr, ann] = await Promise.all([
         api.adminListInvites(),
         api.adminListUsers(),
+        api.adminListAnnouncements(),
       ]);
       setInvites(inv);
       setUsers(usr);
+      setAnnouncements(ann);
     } catch {
       showToast("Failed to load data", "err");
     } finally {
@@ -207,6 +234,89 @@ export default function AdminPage() {
     }
   };
 
+  const handleDeleteUser = async (u: AdminUser) => {
+    if (u.id === user.id) {
+      showToast("Cannot delete your own account", "err");
+      return;
+    }
+    if (!window.confirm(`Delete user "${u.email}"? This will remove all their data permanently.`)) return;
+    setActionLoading(u.id);
+    try {
+      await api.adminDeleteUser(u.id);
+      showToast(`User ${u.email} deleted`);
+      await fetchData();
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : "Delete failed", "err");
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleCreateAnnouncement = async () => {
+    if (!annForm.title.trim() || !annForm.message.trim()) {
+      showToast("Title and message are required", "err");
+      return;
+    }
+    setAnnFormLoading(true);
+    try {
+      await api.adminCreateAnnouncement({
+        title: annForm.title.trim(),
+        message: annForm.message.trim(),
+        type: annForm.type,
+        expires_at: annForm.expires_at ? new Date(annForm.expires_at).toISOString() : null,
+      });
+      showToast("Announcement created");
+      setAnnForm({ title: "", message: "", type: "info", expires_at: "" });
+      await fetchData();
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : "Create failed", "err");
+    } finally {
+      setAnnFormLoading(false);
+    }
+  };
+
+  const handleDeleteAnnouncement = async (ann: Announcement) => {
+    if (!window.confirm(`Delete announcement "${ann.title}"?`)) return;
+    setActionLoading(`ann-${ann.id}`);
+    try {
+      await api.adminDeleteAnnouncement(ann.id);
+      showToast("Announcement deleted");
+      await fetchData();
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : "Delete failed", "err");
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleDeleteInvite = async (inv: InviteRequest) => {
+    if (!window.confirm(`Delete invite for "${inv.email}"?`)) return;
+    setActionLoading(`del-${inv.id}`);
+    try {
+      await api.adminDeleteInvite(inv.id);
+      showToast(`Invite for ${inv.email} deleted`);
+      await fetchData();
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : "Delete failed", "err");
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleResendInvite = async (inv: InviteRequest) => {
+    setActionLoading(`resend-${inv.id}`);
+    try {
+      const res = await api.adminResendInvite(inv.email);
+      showToast(`Invite resent to ${inv.email}`);
+      if (res.invite_link) setCopiedLink(res.invite_link);
+      await fetchData();
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : "Resend failed", "err");
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
     showToast("Link copied!");
@@ -219,6 +329,7 @@ export default function AdminPage() {
   const approvedCount = invites.filter((i) => i.status === "approved" || i.status === "used").length;
   const totalUsers = users.length;
   const adminCount = users.filter((u) => u.is_superuser).length;
+  const activeAnnouncementsCount = announcements.filter((a) => a.is_active).length;
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
@@ -263,12 +374,13 @@ export default function AdminPage() {
       )}
 
       {/* Stat cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         {[
           { label: "Pending", value: pendingCount, color: "text-amber-400", bg: "bg-amber-500/10" },
           { label: "Approved", value: approvedCount, color: "text-iv-green", bg: "bg-iv-green/10" },
           { label: "Users", value: totalUsers, color: "text-iv-cyan", bg: "bg-iv-cyan/10" },
           { label: "Admins", value: adminCount, color: "text-purple-400", bg: "bg-purple-500/10" },
+          { label: "Broadcasts", value: activeAnnouncementsCount, color: "text-orange-400", bg: "bg-orange-500/10" },
         ].map((s) => (
           <div
             key={s.label}
@@ -286,6 +398,7 @@ export default function AdminPage() {
           [
             { id: "invites" as Tab, label: "Invites", icon: Mail, badge: pendingCount },
             { id: "users" as Tab, label: "Users", icon: Users, badge: 0 },
+            { id: "announcements" as Tab, label: "Announcements", icon: Bell, badge: activeAnnouncementsCount },
           ] as const
         ).map((t) => (
           <button
@@ -319,14 +432,28 @@ export default function AdminPage() {
           actionLoading={actionLoading}
           onApprove={handleApprove}
           onReject={handleReject}
+          onDelete={handleDeleteInvite}
+          onResend={handleResendInvite}
         />
-      ) : (
+      ) : tab === "users" ? (
         <UsersTable
           users={users}
+          currentUserId={user.id}
           currentEmail={user.email}
           actionLoading={actionLoading}
           onPromote={handlePromote}
           onDemote={handleDemote}
+          onDelete={handleDeleteUser}
+        />
+      ) : (
+        <AnnouncementsPanel
+          announcements={announcements}
+          form={annForm}
+          onFormChange={(f) => setAnnForm((prev) => ({ ...prev, ...f }))}
+          onSubmit={handleCreateAnnouncement}
+          formLoading={annFormLoading}
+          actionLoading={actionLoading}
+          onDelete={handleDeleteAnnouncement}
         />
       )}
     </div>
@@ -340,11 +467,15 @@ function InvitesTable({
   actionLoading,
   onApprove,
   onReject,
+  onDelete,
+  onResend,
 }: {
   invites: InviteRequest[];
   actionLoading: string | null;
   onApprove: (email: string) => void;
   onReject: (email: string) => void;
+  onDelete: (inv: InviteRequest) => void;
+  onResend: (inv: InviteRequest) => void;
 }) {
   const [sortAsc, setSortAsc] = useState(false);
   const sorted = [...invites].sort((a, b) => {
@@ -403,32 +534,63 @@ function InvitesTable({
                   {timeAgo(inv.created_at)}
                 </td>
                 <td className="px-5 py-3.5 text-right">
-                  {inv.status === "pending" ? (
-                    <div className="flex items-center justify-end gap-2">
+                  <div className="flex items-center justify-end gap-2">
+                    {inv.status === "pending" && (
+                      <>
+                        <button
+                          onClick={() => onApprove(inv.email)}
+                          disabled={!!actionLoading}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-iv-green/10 text-iv-green border border-iv-green/20 hover:bg-iv-green/20 transition-colors disabled:opacity-50"
+                        >
+                          {actionLoading === inv.email ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <CheckCircle className="w-3 h-3" />
+                          )}
+                          Approve
+                        </button>
+                        <button
+                          onClick={() => onReject(inv.email)}
+                          disabled={!!actionLoading}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-iv-danger/10 text-iv-danger border border-iv-danger/20 hover:bg-iv-danger/20 transition-colors disabled:opacity-50"
+                        >
+                          <XCircle className="w-3 h-3" />
+                          Reject
+                        </button>
+                      </>
+                    )}
+                    {inv.status === "approved" && (
                       <button
-                        onClick={() => onApprove(inv.email)}
-                        disabled={actionLoading === inv.email}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-iv-green/10 text-iv-green border border-iv-green/20 hover:bg-iv-green/20 transition-colors disabled:opacity-50"
+                        onClick={() => onResend(inv)}
+                        disabled={!!actionLoading}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-iv-cyan/10 text-iv-cyan border border-iv-cyan/20 hover:bg-iv-cyan/20 transition-colors disabled:opacity-50"
                       >
-                        {actionLoading === inv.email ? (
+                        {actionLoading === `resend-${inv.id}` ? (
                           <Loader2 className="w-3 h-3 animate-spin" />
                         ) : (
-                          <CheckCircle className="w-3 h-3" />
+                          <Send className="w-3 h-3" />
                         )}
-                        Approve
+                        Resend
                       </button>
+                    )}
+                    {(inv.status === "approved" || inv.status === "pending") && (
                       <button
-                        onClick={() => onReject(inv.email)}
-                        disabled={actionLoading === inv.email}
+                        onClick={() => onDelete(inv)}
+                        disabled={!!actionLoading}
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-iv-danger/10 text-iv-danger border border-iv-danger/20 hover:bg-iv-danger/20 transition-colors disabled:opacity-50"
                       >
-                        <XCircle className="w-3 h-3" />
-                        Reject
+                        {actionLoading === `del-${inv.id}` ? (
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <Trash2 className="w-3 h-3" />
+                        )}
+                        Delete
                       </button>
-                    </div>
-                  ) : (
-                    <span className="text-xs text-iv-muted/50">—</span>
-                  )}
+                    )}
+                    {inv.status !== "pending" && inv.status !== "approved" && (
+                      <span className="text-xs text-iv-muted/50">—</span>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}
@@ -439,20 +601,170 @@ function InvitesTable({
   );
 }
 
+// ── Announcements Panel ──
+
+const ANNOUNCEMENT_TYPE_STYLES: Record<string, { bg: string; text: string; border: string; label: string }> = {
+  info: { bg: "bg-iv-cyan/10", text: "text-iv-cyan", border: "border-iv-cyan/20", label: "Info" },
+  success: { bg: "bg-iv-green/10", text: "text-iv-green", border: "border-iv-green/20", label: "Success" },
+  warning: { bg: "bg-amber-500/10", text: "text-amber-400", border: "border-amber-500/20", label: "Warning" },
+  critical: { bg: "bg-iv-danger/10", text: "text-iv-danger", border: "border-iv-danger/20", label: "Critical" },
+};
+
+function AnnouncementsPanel({
+  announcements,
+  form,
+  onFormChange,
+  onSubmit,
+  formLoading,
+  actionLoading,
+  onDelete,
+}: {
+  announcements: Announcement[];
+  form: { title: string; message: string; type: "info" | "success" | "warning" | "critical"; expires_at: string };
+  onFormChange: (f: Partial<{ title: string; message: string; type: "info" | "success" | "warning" | "critical"; expires_at: string }>) => void;
+  onSubmit: () => void;
+  formLoading: boolean;
+  actionLoading: string | null;
+  onDelete: (ann: Announcement) => void;
+}) {
+  return (
+    <div className="space-y-6">
+      {/* Create form */}
+      <div className="glass rounded-xl border border-iv-border p-6 space-y-4">
+        <div className="flex items-center gap-2 mb-2">
+          <PlusCircle className="w-4 h-4 text-iv-green" />
+          <h3 className="text-sm font-semibold text-iv-text">New Announcement</h3>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs text-iv-muted mb-1.5 font-medium">Title</label>
+            <input
+              type="text"
+              value={form.title}
+              onChange={(e) => onFormChange({ title: e.target.value })}
+              placeholder="e.g. Scheduled maintenance tonight"
+              className="w-full bg-iv-surface border border-iv-border rounded-lg px-3 py-2 text-sm text-iv-text placeholder:text-iv-muted/50 focus:outline-none focus:border-iv-green/50"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-iv-muted mb-1.5 font-medium">Type</label>
+              <select
+                value={form.type}
+                onChange={(e) => onFormChange({ type: e.target.value as "info" | "success" | "warning" | "critical" })}
+                className="w-full bg-iv-surface border border-iv-border rounded-lg px-3 py-2 text-sm text-iv-text focus:outline-none focus:border-iv-green/50"
+              >
+                <option value="info">Info</option>
+                <option value="success">Success</option>
+                <option value="warning">Warning</option>
+                <option value="critical">Critical</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-iv-muted mb-1.5 font-medium">Expires at (optional)</label>
+              <input
+                type="datetime-local"
+                value={form.expires_at}
+                onChange={(e) => onFormChange({ expires_at: e.target.value })}
+                className="w-full bg-iv-surface border border-iv-border rounded-lg px-3 py-2 text-sm text-iv-text focus:outline-none focus:border-iv-green/50"
+              />
+            </div>
+          </div>
+        </div>
+        <div>
+          <label className="block text-xs text-iv-muted mb-1.5 font-medium">Message</label>
+          <textarea
+            value={form.message}
+            onChange={(e) => onFormChange({ message: e.target.value })}
+            placeholder="Announcement content visible to all users…"
+            rows={3}
+            className="w-full bg-iv-surface border border-iv-border rounded-lg px-3 py-2 text-sm text-iv-text placeholder:text-iv-muted/50 focus:outline-none focus:border-iv-green/50 resize-none"
+          />
+        </div>
+        <button
+          onClick={onSubmit}
+          disabled={formLoading}
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-iv-green/15 text-iv-green border border-iv-green/25 hover:bg-iv-green/25 transition-colors disabled:opacity-50"
+        >
+          {formLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+          Broadcast
+        </button>
+      </div>
+
+      {/* List */}
+      {announcements.length === 0 ? (
+        <div className="glass rounded-xl border border-iv-border p-12 text-center">
+          <Bell className="w-10 h-10 text-iv-muted/30 mx-auto mb-3" />
+          <p className="text-iv-muted text-sm">No announcements yet</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {announcements.map((ann) => {
+            const s = ANNOUNCEMENT_TYPE_STYLES[ann.type] || ANNOUNCEMENT_TYPE_STYLES.info;
+            return (
+              <div
+                key={ann.id}
+                className={`glass rounded-xl border p-4 flex items-start gap-4 ${s.border}`}
+              >
+                <div className={`mt-0.5 p-2 rounded-lg ${s.bg}`}>
+                  <Info className={`w-4 h-4 ${s.text}`} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-sm font-semibold text-iv-text">{ann.title}</span>
+                    <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded-full ${s.bg} ${s.text} border ${s.border}`}>
+                      {s.label}
+                    </span>
+                    {!ann.is_active && (
+                      <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded-full bg-iv-muted/10 text-iv-muted border border-iv-border">
+                        Expired
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-iv-muted leading-relaxed">{ann.message}</p>
+                  <p className="text-[10px] text-iv-muted/50 mt-1.5">
+                    Created {timeAgo(ann.created_at)}
+                    {ann.expires_at && ` · Expires ${new Date(ann.expires_at).toLocaleDateString()}`}
+                  </p>
+                </div>
+                <button
+                  onClick={() => onDelete(ann)}
+                  disabled={!!actionLoading}
+                  className="flex-shrink-0 p-2 rounded-lg text-iv-muted hover:text-iv-danger hover:bg-iv-danger/10 transition-colors disabled:opacity-50"
+                >
+                  {actionLoading === `ann-${ann.id}` ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="w-4 h-4" />
+                  )}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Users Table ──
 
 function UsersTable({
   users,
+  currentUserId,
   currentEmail,
   actionLoading,
   onPromote,
   onDemote,
+  onDelete,
 }: {
   users: AdminUser[];
+  currentUserId: string;
   currentEmail: string;
   actionLoading: string | null;
   onPromote: (email: string) => void;
   onDemote: (email: string) => void;
+  onDelete: (u: AdminUser) => void;
 }) {
   if (users.length === 0) {
     return (
@@ -517,34 +829,50 @@ function UsersTable({
                   {u.created_at ? timeAgo(u.created_at) : "—"}
                 </td>
                 <td className="px-5 py-3.5 text-right">
-                  {u.email === currentEmail ? (
+                  {u.id === currentUserId ? (
                     <span className="text-xs text-iv-muted/50">—</span>
-                  ) : u.is_superuser ? (
-                    <button
-                      onClick={() => onDemote(u.email)}
-                      disabled={actionLoading === u.email}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-iv-danger/10 text-iv-danger border border-iv-danger/20 hover:bg-iv-danger/20 transition-colors disabled:opacity-50"
-                    >
-                      {actionLoading === u.email ? (
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                      ) : (
-                        <UserMinus className="w-3 h-3" />
-                      )}
-                      Demote
-                    </button>
                   ) : (
-                    <button
-                      onClick={() => onPromote(u.email)}
-                      disabled={actionLoading === u.email}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-purple-500/10 text-purple-400 border border-purple-500/20 hover:bg-purple-500/20 transition-colors disabled:opacity-50"
-                    >
-                      {actionLoading === u.email ? (
-                        <Loader2 className="w-3 h-3 animate-spin" />
+                    <div className="flex items-center justify-end gap-2">
+                      {u.is_superuser ? (
+                        <button
+                          onClick={() => onDemote(u.email)}
+                          disabled={!!actionLoading}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-iv-danger/10 text-iv-danger border border-iv-danger/20 hover:bg-iv-danger/20 transition-colors disabled:opacity-50"
+                        >
+                          {actionLoading === u.email ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <UserMinus className="w-3 h-3" />
+                          )}
+                          Demote
+                        </button>
                       ) : (
-                        <Crown className="w-3 h-3" />
+                        <button
+                          onClick={() => onPromote(u.email)}
+                          disabled={!!actionLoading}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-purple-500/10 text-purple-400 border border-purple-500/20 hover:bg-purple-500/20 transition-colors disabled:opacity-50"
+                        >
+                          {actionLoading === u.email ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <Crown className="w-3 h-3" />
+                          )}
+                          Promote
+                        </button>
                       )}
-                      Promote
-                    </button>
+                      <button
+                        onClick={() => onDelete(u)}
+                        disabled={!!actionLoading}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-iv-danger/10 text-iv-danger border border-iv-danger/20 hover:bg-iv-danger/20 transition-colors disabled:opacity-50"
+                      >
+                        {actionLoading === u.id ? (
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <Trash2 className="w-3 h-3" />
+                        )}
+                        Delete
+                      </button>
+                    </div>
                   )}
                 </td>
               </tr>
