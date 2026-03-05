@@ -593,9 +593,17 @@ export const api = {
     return res.json();
   },
 
-  async getMaintenance(id: string, limit = 50) {
+  async getMaintenance(
+    id: string,
+    limit = 50,
+    fromDate?: string,
+    toDate?: string
+  ) {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (fromDate) params.set("from_date", fromDate);
+    if (toDate) params.set("to_date", toDate);
     const res = await apiFetch(
-      `/api/v1/vehicles/${id}/maintenance?limit=${limit}`
+      `/api/v1/vehicles/${id}/maintenance?${params.toString()}`
     );
     if (!res.ok) return [];
     return res.json();

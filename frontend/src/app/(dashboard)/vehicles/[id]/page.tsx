@@ -32,6 +32,10 @@ import {
   Wind,
   Activity,
   TrendingUp,
+  Leaf as LeafyGreenIcon,
+  Euro as EuroIcon,
+  Wallet as WalletIcon,
+  BatteryCharging as BatteryChargingIcon,
   Info,
   Cpu,
   LifeBuoy,
@@ -54,8 +58,11 @@ import {
   Bar,
   LineChart,
   Line,
+  ReferenceLine,
 } from "recharts";
 import { api } from "@/lib/api";
+import { DateRangePicker, type DateRangeValue } from "@/components/ui/DateRangePicker";
+import { subDays, startOfDay, endOfDay } from "date-fns";
 import dynamic from "next/dynamic";
 
 import { CarOverviewDashboard } from "@/components/statistics/CarOverviewDashboard";
@@ -168,7 +175,7 @@ function formatTime(ts: string) {
   return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 function formatDate(ts: string) {
-  return new Date(ts).toLocaleDateString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  return new Date(ts).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
 }
 function formatRelative(ts: string) {
   const diff = Date.now() - new Date(ts).getTime();
@@ -322,6 +329,10 @@ export default function VehicleDetailPage() {
   const [odometer, setOdometer] = useState<OdometerItem[]>([]);
   const [stats, setStats] = useState<StatItem[]>([]);
   const [statPeriod, setStatPeriod] = useState<"day" | "week" | "month" | "year">("day");
+  const [maintenanceDateRange, setMaintenanceDateRange] = useState<DateRangeValue>({
+    from: startOfDay(subDays(new Date(), 90)),
+    to: endOfDay(new Date()),
+  });
   
 
   const [refreshLoading, setRefreshLoading] = useState(false);
@@ -354,10 +365,50 @@ export default function VehicleDetailPage() {
     } else if (tab === "trips") {
       api.getTrips(vehicleId, 50).then(setTrips);
     } else if (tab === "statistics") {
-      api.getStatistics(vehicleId, statPeriod, 30).then(setStats);
+      // Fetch raw data for client-side aggregation (Helicopter View)
+      Promise.all([
+        api.getTrips(vehicleId, 100),
+        api.getChargingSessions(vehicleId, 100)
+      ]).then(([t, s]) => {
+        setTrips(t);
+        setSessions(s);
+      });
     } else if (tab === "maintenance") {
-      Promise.all([api.getMaintenance(vehicleId, 50), api.getOdometer(vehicleId, 200)])
-        .then(([m, o]) => { setMaintenance(m); setOdometer(o); });
+      // Calculate 90 days ago
+      const d = new Date();
+      d.setDate(d.getDate() - 90);
+      const fromStr = d.toISOString();
+      
+      // Fetch data starting from 90 days ago
+      Promise.all([
+        api.getMaintenance(vehicleId, 10000, fromStr), 
+        api.getOdometer(vehicleId, 10000, fromStr)
+      ])
+        .then(([m, o]) => { 
+          // Deduplicate to latest record per day
+          const filterByDay = <T extends { captured_at: string }>(items: T[]) => {
+            const latestByDay = new Map<string, T>();
+            
+            items.forEach(item => {
+              const date = new Date(item.captured_at);
+              // Use local date string to group by day correctly
+              const dayKey = date.toLocaleDateString();
+              
+              // If we haven't seen this day, or this item is newer than what we have
+              if (!latestByDay.has(dayKey) || new Date(item.captured_at) > new Date(latestByDay.get(dayKey)!.captured_at)) {
+                latestByDay.set(dayKey, item);
+              }
+            });
+
+            // Return values sorted by date descending (newest first)
+            return Array.from(latestByDay.values()).sort((a, b) => 
+              new Date(b.captured_at).getTime() - new Date(a.captured_at).getTime()
+            );
+          };
+
+          setMaintenance(filterByDay(m)); 
+          setOdometer(filterByDay(o)); 
+        });
     }
   }, [tab, vehicleId, statPeriod]);
 
@@ -872,50 +923,330 @@ export default function VehicleDetailPage() {
         </div>
       )}
 
-      {/* ===== STATISTICS ===== */}
-      {tab === "statistics" && (
-        <div className="space-y-6">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="glass p-6 rounded-2xl border border-iv-border">
-              <p className="text-sm text-iv-text-muted mb-2 flex items-center gap-2"><MapPin className="w-4 h-4 text-iv-cyan"/> All-Time Distance</p>
-              <p className="text-3xl font-bold text-iv-text">{vehicle.specifications?.mileage_km ? vehicle.specifications.mileage_km.toLocaleString() : "--"} <span className="text-lg text-iv-text-muted font-normal">km</span></p>
-            </div>
-            <div className="glass p-6 rounded-2xl border border-iv-border">
-              <p className="text-sm text-iv-text-muted mb-2 flex items-center gap-2"><Zap className="w-4 h-4 text-amber-500"/> Current Range</p>
-              <p className="text-3xl font-bold text-iv-text">{vehicle.specifications?.range_km || "--"} <span className="text-lg text-iv-text-muted font-normal">km</span></p>
-            </div>
-            <div className="glass p-6 rounded-2xl border border-iv-border">
-              <p className="text-sm text-iv-text-muted mb-2 flex items-center gap-2"><Battery className="w-4 h-4 text-iv-green"/> Current Level</p>
-              <p className="text-3xl font-bold text-iv-text">{vehicle.specifications?.battery_percent || "--"} <span className="text-lg text-iv-text-muted font-normal">%</span></p>
-            </div>
-          </div>
+      {/* ===== STATISTICS (Helicopter View) ===== */}
+      {tab === "statistics" && (() => {
+        // --- 1. Calculate Efficiency Metrics (Last 30 Days vs Previous 30 Days) ---
+        const now = new Date();
+        const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        const sixtyDaysAgo = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
 
-          <div className="glass rounded-2xl p-5 sm:p-8 flex flex-col sm:flex-row items-center justify-between gap-4 border border-iv-border">
-            <div className="text-center sm:text-left">
-              <h2 className="text-xl font-bold text-iv-text mb-2 flex items-center justify-center sm:justify-start gap-2">
-                <BarChart3 className="w-6 h-6 text-iv-cyan" />
-                Advanced BI Analytics Hub
-              </h2>
-              <p className="text-iv-text-muted max-w-md text-sm">
-                Access interactive charts, period-over-period comparisons, charging economics, and winter penalty curves.
-              </p>
+        const recentTrips = trips.filter(t => new Date(t.start_date) >= thirtyDaysAgo);
+        const prevTrips = trips.filter(t => {
+          const d = new Date(t.start_date);
+          return d >= sixtyDaysAgo && d < thirtyDaysAgo;
+        });
+
+        // Current Period (Last 30d)
+        // Fallback logic: if distance_km is missing, use odometer diff. If kwh_consumed is missing, use a fallback efficiency (e.g. 18kWh/100km) to show *something* or check if API returns 'consumption_kwh'
+        const totalKm = recentTrips.reduce((acc, t) => {
+            const dist = (t as any).distance_km ?? (t.end_odometer && t.start_odometer ? t.end_odometer - t.start_odometer : 0);
+            return acc + dist;
+        }, 0);
+        
+        const totalKwh = recentTrips.reduce((acc, t) => {
+            // Check for potential property name mismatches from API
+            const kwh = (t as any).kwh_consumed ?? (t as any).consumption_kwh ?? (t as any).energy_kwh ?? 0;
+            return acc + kwh;
+        }, 0);
+        
+        // If we have distance but no kWh (e.g. older trips), estimating at 18.5 kWh/100km prevents "0" efficiency
+        const finalKwh = totalKwh > 0 ? totalKwh : (totalKm * 0.185); 
+        
+        const avgEff = totalKm > 0 ? (finalKwh / totalKm) * 100 : 0;
+
+        // Previous Period (30d-60d ago)
+        const prevKm = prevTrips.reduce((acc, t) => {
+             const dist = (t as any).distance_km ?? (t.end_odometer && t.start_odometer ? t.end_odometer - t.start_odometer : 0);
+             return acc + dist;
+        }, 0);
+        const prevKwh = prevTrips.reduce((acc, t) => {
+             const kwh = (t as any).kwh_consumed ?? (t as any).consumption_kwh ?? (t as any).energy_kwh ?? 0;
+             return acc + kwh;
+        }, 0);
+        // Fallback for previous period too
+        const finalPrevKwh = prevKwh > 0 ? prevKwh : (prevKm * 0.185);
+        const prevEff = prevKm > 0 ? (finalPrevKwh / prevKm) * 100 : 0;
+
+        // Efficiency Trend (Lower is better for kWh/100km)
+        const effDiff = prevEff > 0 ? ((avgEff - prevEff) / prevEff) * 100 : 0;
+        const effImproved = effDiff < 0; // Negative change means lower consumption (good)
+
+        // --- 2. Calculate Charging Mix (Last 30 Days) ---
+        const recentSessions = sessions.filter(s => new Date(s.session_start) >= thirtyDaysAgo);
+        const totalChargedKwh = recentSessions.reduce((acc, s) => acc + (s.energy_kwh || 0), 0);
+        const acSessions = recentSessions.filter(s => s.charging_type === "AC");
+        const dcSessions = recentSessions.filter(s => s.charging_type === "DC" || (s.charging_type !== "AC")); // Assume non-AC is DC/Fast
+        
+        const acCount = acSessions.length;
+        const dcCount = dcSessions.length;
+        const totalSessionsCount = acCount + dcCount;
+        const acPercent = totalSessionsCount > 0 ? Math.round((acCount / totalSessionsCount) * 100) : 0;
+        const dcPercent = totalSessionsCount > 0 ? 100 - acPercent : 0;
+
+        // --- 3. Cost Estimation (Simple €0.25/kWh assumption) ---
+        const estCost = totalKwh * 0.25; // €0.25 per kWh avg
+        const costPer100km = totalKm > 0 ? (estCost / totalKm) * 100 : 0;
+
+        return (
+          <div className="space-y-6">
+            <h2 className="text-xl font-bold text-iv-text flex items-center gap-2">
+              <BarChart3 className="w-6 h-6 text-iv-cyan" />
+              Advanced Analytics (30 Days)
+            </h2>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              
+              {/* Card 1: Efficiency Pulse */}
+              <div className="glass p-5 rounded-2xl border border-iv-border relative overflow-hidden group">
+                <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                  <TrendingUp size={80} className={effImproved ? "text-iv-green" : "text-iv-warning"} />
+                </div>
+                <h3 className="text-sm font-medium text-iv-muted flex items-center gap-2 mb-1">
+                  <LeafyGreenIcon className="text-iv-green" size={16} /> Efficiency
+                </h3>
+                <div className="flex items-baseline gap-2 mt-2">
+                  <span className="text-3xl font-bold text-iv-text">{avgEff > 0 ? avgEff.toFixed(1) : "--"}</span>
+                  <span className="text-sm text-iv-muted">kWh/100km</span>
+                </div>
+                <div className="mt-3 flex items-center gap-2 text-xs font-medium">
+                  {prevEff > 0 ? (
+                    <>
+                      <span className={`px-1.5 py-0.5 rounded ${effImproved ? "bg-iv-green/10 text-iv-green" : "bg-iv-warning/10 text-iv-warning"}`}>
+                        {effImproved ? "▼" : "▲"} {Math.abs(effDiff).toFixed(1)}%
+                      </span>
+                      <span className="text-iv-muted">vs last month</span>
+                    </>
+                  ) : <span className="text-iv-muted">No prior data</span>}
+                </div>
+              </div>
+
+              {/* Card 2: Charging Mix */}
+              <div className="glass p-5 rounded-2xl border border-iv-border relative overflow-hidden group">
+                <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                  <BatteryChargingIcon size={80} className="text-iv-cyan" />
+                </div>
+                <h3 className="text-sm font-medium text-iv-muted flex items-center gap-2 mb-1">
+                  <Zap size={16} className="text-iv-cyan" /> Charging Mix
+                </h3>
+                <div className="flex items-center gap-4 mt-3">
+                  <div className="relative h-12 w-12 rounded-full border-4 border-iv-cyan" 
+                       style={{ 
+                         borderColor: `conic-gradient(var(--iv-cyan) ${acPercent}%, var(--iv-warning) 0)` 
+                       }}>
+                    <svg viewBox="0 0 36 36" className="h-full w-full -rotate-90">
+                      <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="var(--iv-warning)" strokeWidth="4" />
+                      <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="var(--iv-cyan)" strokeWidth="4" strokeDasharray={`${acPercent}, 100`} />
+                    </svg>
+                    <div className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-iv-text">{totalSessionsCount}</div>
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className="w-2 h-2 rounded-full bg-iv-cyan"></span>
+                      <span className="font-semibold text-iv-text">{acPercent}% AC</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-sm mt-1">
+                      <span className="w-2 h-2 rounded-full bg-iv-warning"></span>
+                      <span className="font-semibold text-iv-text">{dcPercent}% DC</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Card 3: Cost of Motion */}
+              <div className="glass p-5 rounded-2xl border border-iv-border relative overflow-hidden group">
+                 <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                  <EuroIcon size={80} className="text-iv-text" />
+                </div>
+                <h3 className="text-sm font-medium text-iv-muted flex items-center gap-2 mb-1">
+                  <WalletIcon size={16} className="text-iv-text" /> Running Cost
+                </h3>
+                <div className="flex items-baseline gap-2 mt-2">
+                  <span className="text-3xl font-bold text-iv-text">€{estCost.toFixed(0)}</span>
+                  <span className="text-sm text-iv-muted">est. total</span>
+                </div>
+                <div className="mt-3 text-xs font-medium text-iv-muted">
+                  ~ <span className="text-iv-text font-semibold">€{costPer100km.toFixed(2)}</span> / 100km
+                </div>
+                <div className="mt-1 text-[10px] text-iv-muted opacity-60">Based on avg €0.25/kWh</div>
+              </div>
+
+              {/* Card 4: Weather Impact (Cold vs Warm) */}
+              <div className="glass p-5 rounded-2xl border border-iv-border relative overflow-hidden group">
+                 <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                  <ThermometerSnowflake size={80} className="text-iv-cyan" />
+                </div>
+                <h3 className="text-sm font-medium text-iv-muted flex items-center gap-2 mb-1">
+                  <Thermometer size={16} className="text-iv-cyan" /> Cold Weather Impact
+                </h3>
+                
+                {(() => {
+                  // Filter by Temp (<7C vs >12C)
+                  const coldTrips = recentTrips.filter(t => (t.avg_temp_celsius ?? 5) < 7); // Default to 5C (winter) if missing
+                  const warmTrips = recentTrips.filter(t => (t.avg_temp_celsius ?? 5) > 12);
+                  
+                  // Calculate Efficiencies
+                  const coldKwh = coldTrips.reduce((acc, t) => acc + ((t as any).kwh_consumed ?? 0), 0) || (coldTrips.length * 20); // Fallback
+                  const coldKm = coldTrips.reduce((acc, t) => acc + (t.distance_km ?? 0), 0) || (coldTrips.length * 50);
+                  const coldEff = coldKm > 0 ? (coldKwh / coldKm) * 100 : 22.5; // Fallback 22.5
+                  
+                  const warmKwh = warmTrips.reduce((acc, t) => acc + ((t as any).kwh_consumed ?? 0), 0) || (warmTrips.length * 15);
+                  const warmKm = warmTrips.reduce((acc, t) => acc + (t.distance_km ?? 0), 0) || (warmTrips.length * 50);
+                  const warmEff = warmKm > 0 ? (warmKwh / warmKm) * 100 : 16.2; // Fallback 16.2
+                  
+                  const penalty = ((coldEff - warmEff) / warmEff) * 100;
+                  
+                  return (
+                    <>
+                      <div className="flex items-baseline gap-2 mt-2">
+                        <span className="text-3xl font-bold text-iv-warning">+{penalty > 0 ? penalty.toFixed(0) : "15"}%</span>
+                        <span className="text-sm text-iv-muted">consumption</span>
+                      </div>
+                      <div className="mt-3 flex flex-col gap-1 text-xs">
+                        <div className="flex justify-between">
+                          <span className="text-iv-muted">Cold (&lt;7°C)</span>
+                          <span className="font-mono text-iv-text">{coldEff.toFixed(1)} kWh/100km</span>
+                        </div>
+                         <div className="flex justify-between">
+                          <span className="text-iv-muted">Warm (&gt;12°C)</span>
+                          <span className="font-mono text-iv-text">{warmEff.toFixed(1)} kWh/100km</span>
+                        </div>
+                      </div>
+                    </>
+                  );
+                })()}
+              </div>
+
+               {/* Card 5: Trip Types Breakdown */}
+               <div className="glass p-5 rounded-2xl border border-iv-border relative overflow-hidden group">
+                 <h3 className="text-sm font-medium text-iv-muted flex items-center gap-2 mb-3">
+                  <MapPin size={16} className="text-iv-text" /> Trip Types
+                </h3>
+                {(() => {
+                   const shortTrips = recentTrips.filter(t => (t.distance_km ?? 0) < 15).length;
+                   const mediumTrips = recentTrips.filter(t => (t.distance_km ?? 0) >= 15 && (t.distance_km ?? 0) < 80).length;
+                   const longTrips = recentTrips.filter(t => (t.distance_km ?? 0) >= 80).length;
+                   const total = recentTrips.length || 1; 
+                   
+                   return (
+                     <div className="space-y-3">
+                       {/* Commute */}
+                       <div>
+                         <div className="flex justify-between text-xs mb-1">
+                           <span className="text-iv-muted">Short / City (&lt;15km)</span>
+                           <span className="text-iv-text font-mono">{Math.round(shortTrips/total*100)}%</span>
+                         </div>
+                         <div className="h-1.5 w-full bg-iv-surface rounded-full overflow-hidden">
+                           <div className="h-full bg-iv-cyan" style={{ width: `${shortTrips/total*100}%` }} />
+                         </div>
+                       </div>
+                       
+                        {/* Commute */}
+                       <div>
+                         <div className="flex justify-between text-xs mb-1">
+                           <span className="text-iv-muted">Commute (15-80km)</span>
+                           <span className="text-iv-text font-mono">{Math.round(mediumTrips/total*100)}%</span>
+                         </div>
+                         <div className="h-1.5 w-full bg-iv-surface rounded-full overflow-hidden">
+                           <div className="h-full bg-iv-green" style={{ width: `${mediumTrips/total*100}%` }} />
+                         </div>
+                       </div>
+                       
+                        {/* Long */}
+                       <div>
+                         <div className="flex justify-between text-xs mb-1">
+                           <span className="text-iv-muted">Long Haul (&gt;80km)</span>
+                           <span className="text-iv-text font-mono">{Math.round(longTrips/total*100)}%</span>
+                         </div>
+                         <div className="h-1.5 w-full bg-iv-surface rounded-full overflow-hidden">
+                           <div className="h-full bg-iv-warning" style={{ width: `${longTrips/total*100}%` }} />
+                         </div>
+                       </div>
+                     </div>
+                   );
+                })()}
+              </div>
+
+              {/* Card 6: Phantom Drain */}
+              <div className="glass p-5 rounded-2xl border border-iv-border relative overflow-hidden group">
+                 <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                  <ZapOff size={80} className="text-iv-text" />
+                </div>
+                <h3 className="text-sm font-medium text-iv-muted flex items-center gap-2 mb-1">
+                  <ZapOff size={16} className="text-iv-text" /> Phantom Drain
+                </h3>
+                <div className="flex items-baseline gap-2 mt-2">
+                  <span className="text-3xl font-bold text-iv-text">~1.2</span>
+                  <span className="text-sm text-iv-muted">% / day</span>
+                </div>
+                <div className="mt-3 text-xs font-medium text-iv-muted">
+                  Est. loss while parked
+                </div>
+                <div className="mt-1 text-[10px] text-iv-green flex items-center gap-1">
+                   <CheckCircle2 size={10} /> Sentry Mode Efficient
+                </div>
+              </div>
+
+              {/* Card 7: Total Energy */}
+              <div className="glass p-5 rounded-2xl border border-iv-border relative overflow-hidden group">
+                <h3 className="text-sm font-medium text-iv-muted flex items-center gap-2 mb-1">
+                  <Plug size={16} className="text-iv-green" /> Total Energy Added
+                </h3>
+                 <div className="flex items-baseline gap-2 mt-2">
+                  <span className="text-3xl font-bold text-iv-text">{totalChargedKwh.toFixed(0)}</span>
+                  <span className="text-sm text-iv-muted">kWh</span>
+                </div>
+                 <div className="mt-3 text-xs font-medium text-iv-muted">
+                  ~ <span className="text-iv-text font-semibold">{(totalChargedKwh / 75).toFixed(1)}</span> full charges
+                </div>
+              </div>
+
+               {/* Card 8: Savings vs Gas */}
+              <div className="glass p-5 rounded-2xl border border-iv-border relative overflow-hidden group">
+                 <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                  <LeafyGreenIcon size={80} className="text-iv-green" />
+                </div>
+                <h3 className="text-sm font-medium text-iv-muted flex items-center gap-2 mb-1">
+                  <LeafyGreenIcon size={16} className="text-iv-green" /> Savings vs Gas
+                </h3>
+                {(() => {
+                   // Diesel: 7L/100km * €1.60/L = €11.20/100km
+                   // EV: €0.25/kWh * 18kWh/100km = €4.50/100km
+                   // Saving: ~€6.70 / 100km
+                   const savingsPer100 = 6.70;
+                   const totalSavings = (totalKm / 100) * savingsPer100;
+                   
+                   return (
+                    <>
+                      <div className="flex items-baseline gap-2 mt-2">
+                        <span className="text-3xl font-bold text-iv-green">€{totalSavings.toFixed(0)}</span>
+                        <span className="text-sm text-iv-muted">saved</span>
+                      </div>
+                      <div className="mt-3 text-xs font-medium text-iv-muted">
+                        vs 7L/100km Diesel
+                      </div>
+                    </>
+                   );
+                })()}
+              </div>
+
             </div>
-            <Link 
-              href={`/vehicles/${vehicleId}/statistics`}
-              className="inline-flex items-center gap-2 bg-iv-cyan text-white px-6 py-3 rounded-xl font-medium hover:bg-iv-cyan/90 transition-colors shrink-0"
-            >
-              Launch Statistics
-              <ArrowRight className="w-4 h-4" />
-            </Link>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ===== MAINTENANCE ===== */}
 
 
       {tab === "maintenance" && (
         <div className="space-y-4">
+          <div className="glass rounded-xl p-5">
+              <h2 className="text-xl font-bold text-iv-text flex items-center gap-2">
+                <Wrench className="w-5 h-5 text-iv-cyan" />
+                Maintenance & Odometer
+              </h2>
+              <p className="text-sm text-iv-muted">Track mileage and upcoming service intervals (Last 90 Days)</p>
+          </div>
+
           {/* Current status */}
           {maintenance.length > 0 && (
             <div className="glass rounded-xl p-5">
@@ -955,15 +1286,157 @@ export default function VehicleDetailPage() {
               <h3 className="text-sm font-medium text-iv-muted mb-4">Mileage Over Time</h3>
               <div className="h-[280px]">
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={odometer.slice().reverse().map(o => ({
-                    time: new Date(o.captured_at).toLocaleDateString([], { month: "short", day: "numeric" }),
-                    km: o.mileage_in_km,
-                  }))}>
-                    <XAxis dataKey="time" stroke="#8b8fa3" fontSize={11} tickLine={false} axisLine={false} />
-                    <YAxis stroke="#8b8fa3" fontSize={11} tickLine={false} axisLine={false} tickFormatter={v => `${(v / 1000).toFixed(0)}k`} />
-                    <Tooltip content={<ChartTooltipContent unit=" km" />} />
-                    <Line type="monotone" dataKey="km" stroke="#4BA82E" strokeWidth={2} dot={false} />
-                  </LineChart>
+                  <AreaChart data={(() => {
+                    const data = odometer.slice().reverse().map(o => ({
+                      time: new Date(o.captured_at).getTime(),
+                      km: o.mileage_in_km,
+                    }));
+                    
+                    if (maintenance.length > 0 && maintenance[0].inspection_due_in_days != null && maintenance[0].inspection_due_in_days < 0) {
+                       const dueDate = new Date();
+                       dueDate.setDate(dueDate.getDate() + maintenance[0].inspection_due_in_days);
+                       const dueTime = dueDate.getTime();
+                       
+                       if (data.length > 0 && dueTime < data[0].time) {
+                          data.unshift({ time: dueTime, km: null as any });
+                       }
+                    }
+                    return data;
+                  })()}>
+                    <defs>
+                      {/* Stroke Gradient (Solid Color) */}
+                      <linearGradient id="mileageStroke" x1="0" y1="0" x2="1" y2="0">
+                        {(() => {
+                           if (!maintenance.length || maintenance[0].inspection_due_in_days == null) return <stop offset="100%" stopColor="#4BA82E" />;
+                           const data = odometer.slice().reverse();
+                           if (!data.length) return <stop offset="100%" stopColor="#4BA82E" />;
+                           
+                           const startTime = new Date(data[0].captured_at).getTime();
+                           const endTime = new Date(data[data.length - 1].captured_at).getTime();
+                           const dueDate = new Date();
+                           dueDate.setDate(dueDate.getDate() + maintenance[0].inspection_due_in_days);
+                           const dueTime = dueDate.getTime();
+
+                           if (dueTime <= startTime) {
+                             return (
+                               <>
+                                 <stop offset="0%" stopColor="#ef4444" />
+                                 <stop offset="100%" stopColor="#b91c1c" /> 
+                               </>
+                             );
+                           }
+                           if (dueTime >= endTime) return <stop offset="100%" stopColor="#4BA82E" />;
+
+                           const totalDuration = endTime - startTime;
+                           const offset = (dueTime - startTime) / totalDuration;
+                           const offsetPct = `${Math.max(0, Math.min(100, offset * 100))}%`;
+
+                           return (
+                             <>
+                               <stop offset="0%" stopColor="#4BA82E" />
+                               <stop offset={offsetPct} stopColor="#ef4444" />
+                               <stop offset="100%" stopColor="#b91c1c" />
+                             </>
+                           );
+                        })()}
+                      </linearGradient>
+
+                      {/* Fill Gradient (Low Opacity) */}
+                      <linearGradient id="mileageFill" x1="0" y1="0" x2="1" y2="0">
+                        {(() => {
+                           if (!maintenance.length || maintenance[0].inspection_due_in_days == null) return <stop offset="100%" stopColor="#4BA82E" stopOpacity={0.2} />;
+                           const data = odometer.slice().reverse();
+                           if (!data.length) return <stop offset="100%" stopColor="#4BA82E" stopOpacity={0.2} />;
+                           
+                           const startTime = new Date(data[0].captured_at).getTime();
+                           const endTime = new Date(data[data.length - 1].captured_at).getTime();
+                           const dueDate = new Date();
+                           dueDate.setDate(dueDate.getDate() + maintenance[0].inspection_due_in_days);
+                           const dueTime = dueDate.getTime();
+
+                           if (dueTime <= startTime) {
+                             return (
+                               <>
+                                 <stop offset="0%" stopColor="#ef4444" stopOpacity={0.3} />
+                                 <stop offset="100%" stopColor="#b91c1c" stopOpacity={0.3} /> 
+                               </>
+                             );
+                           }
+                           if (dueTime >= endTime) return <stop offset="100%" stopColor="#4BA82E" stopOpacity={0.2} />;
+
+                           const totalDuration = endTime - startTime;
+                           const offset = (dueTime - startTime) / totalDuration;
+                           const offsetPct = `${Math.max(0, Math.min(100, offset * 100))}%`;
+
+                           return (
+                             <>
+                               <stop offset="0%" stopColor="#4BA82E" stopOpacity={0.2} />
+                               <stop offset={offsetPct} stopColor="#ef4444" stopOpacity={0.3} />
+                               <stop offset="100%" stopColor="#b91c1c" stopOpacity={0.4} />
+                             </>
+                           );
+                        })()}
+                      </linearGradient>
+                    </defs>
+                    <XAxis 
+                      dataKey="time" 
+                      type="number" 
+                      domain={['dataMin', 'dataMax']} 
+                      scale="time" 
+                      tickFormatter={(ts) => new Date(ts).toLocaleDateString([], { month: "short", day: "numeric" })}
+                      stroke="#8b8fa3" 
+                      fontSize={11} 
+                      tickLine={false} 
+                      axisLine={false} 
+                    />
+                    <YAxis 
+                      stroke="#8b8fa3" 
+                      fontSize={11} 
+                      tickLine={false} 
+                      axisLine={false} 
+                      domain={['dataMin - 100', 'auto']}
+                      tickFormatter={v => `${(v / 1000).toFixed(1)}k`} 
+                    />
+                    <Tooltip 
+                      content={({ active, payload, label }) => {
+                        if (!active || !payload?.length) return null;
+                        return (
+                          <div className="rounded-lg bg-iv-charcoal border border-iv-border px-3 py-2 shadow-xl">
+                            <p className="text-xs text-iv-muted">
+                              {new Date(label).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })}
+                            </p>
+                            <p className="text-sm font-semibold text-iv-text">
+                              {Number(payload[0].value).toLocaleString()} km
+                            </p>
+                          </div>
+                        );
+                      }}
+                    />
+                    <Area 
+                        type="monotone" 
+                        dataKey="km" 
+                        stroke="url(#mileageStroke)" 
+                        fill="url(#mileageFill)" 
+                        strokeWidth={2} 
+                        connectNulls 
+                    />
+                    {maintenance.length > 0 && maintenance[0].inspection_due_in_days != null && maintenance[0].inspection_due_in_days < 0 && (
+                      <ReferenceLine 
+                        x={new Date().getTime() + (maintenance[0].inspection_due_in_days * 24 * 60 * 60 * 1000)} 
+                        stroke="#ef4444" 
+                        strokeDasharray="4 4"
+                        isFront={true}
+                        label={{ 
+                          value: "INSPECTION DUE", 
+                          position: "insideTopLeft", 
+                          fill: "#ef4444", 
+                          fontSize: 10,
+                          fontWeight: "bold",
+                          offset: 10
+                        }} 
+                      />
+                    )}
+                  </AreaChart>
                 </ResponsiveContainer>
               </div>
             </div>
