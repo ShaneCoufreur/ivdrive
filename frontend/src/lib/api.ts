@@ -781,6 +781,25 @@ export const api = {
     if (!res.ok) throw new Error("Failed to delete geofence");
   },
 
+  async getTimeBudget(
+    id: string
+  ): Promise<{ parked_seconds: number; driving_seconds: number; charging_seconds: number; ignition_seconds: number; offline_seconds: number }> {
+    const res = await apiFetch(`/api/v1/vehicles/${id}/analytics/time-budget`);
+    if (!res.ok) return { parked_seconds: 0, driving_seconds: 0, charging_seconds: 0, ignition_seconds: 0, offline_seconds: 0 };
+    return res.json();
+  },
+
+  async getMovementStats(
+    id: string,
+    fromDate: string,
+    toDate: string
+  ): Promise<{ parked_seconds: number; driving_seconds: number; charging_seconds: number; offline_seconds: number; ignition_seconds: number; total_seconds: number }> {
+    const params = new URLSearchParams({ from_date: fromDate, to_date: toDate });
+    const res = await apiFetch(`/api/v1/vehicles/${id}/analytics/movement-stats?${params.toString()}`);
+    if (!res.ok) return { parked_seconds: 0, driving_seconds: 0, charging_seconds: 0, offline_seconds: 0, ignition_seconds: 0, total_seconds: 0 };
+    return res.json();
+  },
+
   async getVisitedLocations(
     id: string,
     limit = 2000,

@@ -5,6 +5,21 @@ All notable changes to the iVDrive project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.12] - 2026-03-07
+### Added
+- **All-Time Time Budget**: New `/analytics/time-budget` backend endpoint aggregates `vehicle_states` and `charging_states` entirely in the database. Returns lifetime totals (Parked, Driving, Charging, Ignition, Offline) without requiring a date range — frontend fetches once on mount.
+- **Charging Session Reconstruction**: `charging_states` rows are point-in-time snapshots; sessions are now reconstructed using gap detection (>30 min gap = new session) with a +5 min buffer per session for the final snapshot interval.
+- **Movement Stats Endpoint**: `/analytics/movement-stats` for period-scoped data (Top Places, Activity Timeline), with proper `first_date`/`last_date` clamping to the query window.
+- **`SkodaCommandClient`**: New backend client using the `myskoda` library for vehicle commands (climate, charging, lock/unlock, honk/flash, wake). Separate from `SkodaAPIClient` (httpx) used for telemetry.
+- **Vehicle Commands UI**: Apple-style compact tiles on the Commands subpage — icon top-left, label bottom-left. Climate card (start + temperature), Unlock card (SPIN input), plus tiles for Charging, Lock, Honk/Flash, Wake.
+- **"Vehicle Commands (Beta)" Settings Toggle**: Preferences section in Settings stores `ivdrive_show_commands` in `localStorage` (default `false`). Commands tab is hidden until the user explicitly enables it.
+- **Map Theme Awareness**: Movement map now switches between CartoDB Dark / Light tiles based on the active app theme, observed via `MutationObserver`.
+
+### Fixed
+- **Manual Refresh Blocked by Smart Polling**: `DataCollector.collect_vehicle()` now accepts `force: bool` — bypasses the parked-vehicle early-return when triggered by a `vehicle_refresh` event.
+- **`formatDuration` Duplicate Definition**: Three copies of `formatDuration` in `MovementDashboard.tsx` caused a fatal Turbopack build error (`the name formatDuration is defined multiple times`). Reduced to a single definition; stray closing braces also removed.
+- **Time Budget "0m Total"**: Previous implementation attempted to sum `first_date == last_date` snapshot rows — now correctly skips zero-duration rows and uses session reconstruction for charging.
+
 ## [1.0.11] - 2026-03-05
 ### Added
 - **PWA (Progressive Web App) Support**: Implemented a web manifest (`manifest.json`) and mobile metadata to allow "Add to Home Screen" installation on iOS and Android.

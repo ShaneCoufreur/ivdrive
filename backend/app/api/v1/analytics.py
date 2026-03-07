@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.dependencies import get_current_user
 from app.database import get_db
-from app.models.telemetry import Trip, ChargingSession, VehiclePosition, ChargingState, ConnectionState, BatteryHealth, PowerUsage, ChargingCurve, ChargingPower, DriveRangeEstimatedFull, DriveConsumption, ClimatizationState, OutsideTemperature, BatteryTemperature, WeconnectError
+from app.models.telemetry import Trip, ChargingSession, VehiclePosition, ChargingState, VehicleState, ConnectionState, BatteryHealth, PowerUsage, ChargingCurve, ChargingPower, DriveRangeEstimatedFull, DriveConsumption, ClimatizationState, OutsideTemperature, BatteryTemperature, WeconnectError
 from app.models.user import User
 from app.models.vehicle import UserVehicle
 from app.schemas.telemetry import PulseResponse
@@ -450,3 +450,136 @@ async def get_legacy_climatization(
         }
         for r in records
     ]
+
+
+@router.get("/{vehicle_id}/analytics/movement-stats")
+async def get_movement_stats(
+    vehicle_id: UUID,
+    from_date: datetime = Query(...),
+    to_date: datetime = Query(...),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Returns accurate time-budget breakdown using real vehicle_states and charging_states."""
+    await get_user_vehicle(user.id, vehicle_id, db)
+
+    # Query vehicle states in range
+    vs_stmt = (
+        select(VehicleState)
+        .where(
+            VehicleState.user_vehicle_id == vehicle_id,
+            VehicleState.first_date < to_date,
+            VehicleState.last_date > from_date,
+        )
+        .order_by(VehicleState.first_date)
+    )
+    vs_result = await db.execute(vs_stmt)
+    vs_rows = vs_result.scalars().all()
+
+    # Query charging states in range
+    cs_stmt = (
+        select(ChargingState)
+        .where(
+            ChargingState.user_vehicle_id == vehicle_id,
+            ChargingState.first_date < to_date,
+            ChargingState.last_date > from_date,
+            ChargingState.state == "CHARGING",
+        )
+        .order_by(ChargingState.first_date)
+    )
+    cs_result = await db.execute(cs_stmt)
+    cs_rows = cs_result.scalars().all()
+
+    def clamp_seconds(row_first, row_last, period_from, period_to) -> float:
+        start = max(row_first, period_from)
+        end = min(row_last, period_to)
+        return max(0.0, (end - start).total_seconds())
+
+    parked_s = driving_s = offline_s = ignition_s = 0.0
+    for row in vs_rows:
+        secs = clamp_seconds(row.first_date, row.last_date, from_date, to_date)
+        state = (row.state or "").upper()
+        if state == "PARKED":
+            parked_s += secs
+        elif state == "DRIVING":
+            driving_s += secs
+        elif state == "OFFLINE":
+            offline_s += secs
+        elif state == "IGNITION_ON":
+            ignition_s += secs
+
+    charging_s = 0.0
+    for row in cs_rows:
+        charging_s += clamp_seconds(row.first_date, row.last_date, from_date, to_date)
+
+    return {
+        "parked_seconds": round(parked_s),
+        "driving_seconds": round(driving_s),
+        "charging_seconds": round(charging_s),
+        "offline_seconds": round(offline_s),
+        "ignition_seconds": round(ignition_s),
+        "total_seconds": round(parked_s + driving_s + offline_s + ignition_s),
+    }
+
+
+@router.get("/{vehicle_id}/analytics/time-budget")
+async def get_time_budget(
+    vehicle_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """
+    All-time time budget, fully aggregated in the DB.
+    - vehicle_states with first_date != last_date: sum duration directly (PARKED, DRIVING, etc.)
+    - charging_states (CHARGING snapshots): reconstruct sessions via gap detection (gap > 30 min = new session),
+      add 5 min per session to cover the last snapshot interval.
+    Returns totals in seconds per category.
+    """
+    await get_user_vehicle(user.id, vehicle_id, db)
+
+    # -- Vehicle state durations (only rows that are real intervals) --
+    vs_sql = """
+        SELECT state, SUM(EXTRACT(EPOCH FROM (last_date - first_date))) AS total_seconds
+        FROM vehicle_states
+        WHERE user_vehicle_id = :vid
+          AND last_date > first_date
+        GROUP BY state
+    """
+    vs_result = await db.execute(__import__("sqlalchemy").text(vs_sql), {"vid": str(vehicle_id)})
+    vs_rows = vs_result.fetchall()
+
+    state_seconds: dict[str, float] = {}
+    for row in vs_rows:
+        state_seconds[row[0].upper()] = float(row[1] or 0)
+
+    # -- Charging: reconstruct sessions from snapshots --
+    cs_sql = """
+        WITH pts AS (
+            SELECT first_date AS ts,
+                   LAG(first_date) OVER (ORDER BY first_date) AS prev_ts
+            FROM charging_states
+            WHERE user_vehicle_id = :vid AND state = 'CHARGING'
+        ),
+        session_ids AS (
+            SELECT ts,
+                   SUM(CASE WHEN prev_ts IS NULL OR EXTRACT(EPOCH FROM (ts - prev_ts)) > 1800
+                       THEN 1 ELSE 0 END) OVER (ORDER BY ts) AS sid
+            FROM pts
+        ),
+        sessions AS (
+            SELECT sid, MIN(ts) AS started, MAX(ts) AS ended
+            FROM session_ids GROUP BY sid
+        )
+        SELECT COALESCE(SUM(EXTRACT(EPOCH FROM (ended - started)) + 300), 0) AS total_seconds
+        FROM sessions
+    """
+    cs_result = await db.execute(__import__("sqlalchemy").text(cs_sql), {"vid": str(vehicle_id)})
+    charging_seconds = float(cs_result.scalar() or 0)
+
+    return {
+        "parked_seconds":   round(state_seconds.get("PARKED", 0)),
+        "driving_seconds":  round(state_seconds.get("DRIVING", 0)),
+        "charging_seconds": round(charging_seconds),
+        "ignition_seconds": round(state_seconds.get("IGNITION_ON", 0)),
+        "offline_seconds":  round(state_seconds.get("OFFLINE", 0)),
+    }

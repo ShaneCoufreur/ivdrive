@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import logging
+import asyncio
 
 import httpx
+import aiohttp
+from myskoda import MySkoda
 
 from app.config import settings
 from app.schemas.skoda import (
@@ -22,6 +25,10 @@ _BASE = settings.skoda_base_url
 
 
 class SkodaAPIClient:
+    """Read-only client for telemetry collection using manual HTTP calls.
+    
+    Kept for backward compatibility with the DataCollector until it is refactored.
+    """
     def __init__(self, access_token: str) -> None:
         self._client = httpx.AsyncClient(
             base_url=_BASE,
@@ -88,51 +95,99 @@ class SkodaAPIClient:
         resp.raise_for_status()
         return resp.json()
 
-    async def start_charging(self, vin: str) -> dict:
-        resp = await self._client.post(f"/api/v1/charging/{vin}/start")
-        resp.raise_for_status()
-        return resp.json()
-
-    async def stop_charging(self, vin: str) -> dict:
-        resp = await self._client.post(f"/api/v1/charging/{vin}/stop")
-        resp.raise_for_status()
-        return resp.json()
-
-    async def start_climatization(self, vin: str, target_temp: float) -> dict:
-        resp = await self._client.post(
-            f"/api/v2/air-conditioning/{vin}/start",
-            json={"targetTemperature": target_temp, "heaterSource": "ELECTRIC"},
-        )
-        resp.raise_for_status()
-        return resp.json()
-
-    async def stop_climatization(self, vin: str) -> dict:
-        resp = await self._client.post(f"/api/v2/air-conditioning/{vin}/stop")
-        resp.raise_for_status()
-        return resp.json()
-
-    async def lock(self, vin: str) -> dict:
-        resp = await self._client.post(f"/api/v1/vehicle-access/{vin}/lock")
-        resp.raise_for_status()
-        return resp.json()
-
-    async def unlock(self, vin: str, spin: str) -> dict:
-        resp = await self._client.post(
-            f"/api/v1/vehicle-access/{vin}/unlock",
-            json={"spin": spin},
-        )
-        resp.raise_for_status()
-        return resp.json()
-
-    async def honk_flash(self, vin: str) -> dict:
-        resp = await self._client.post(f"/api/v1/vehicle-access/{vin}/honk-and-flash")
-        resp.raise_for_status()
-        return resp.json()
-
-    async def wake(self, vin: str) -> dict:
-        resp = await self._client.post(f"/api/v1/vehicle-wakeup/{vin}")
-        resp.raise_for_status()
-        return resp.json()
+    # Legacy command methods removed/deprecated in favor of SkodaCommandClient
+    # to avoid confusion.
 
     async def close(self) -> None:
         await self._client.aclose()
+
+
+class SkodaCommandClient:
+    """Command execution client using the myskoda library."""
+    
+    def __init__(self, email: str, password: str, spin: str | None = None) -> None:
+        self.email = email
+        self.password = password
+        self.spin = spin
+
+    async def _execute(self, vin: str, action: str, **kwargs):
+        """Execute a command on a specific vehicle."""
+        async with aiohttp.ClientSession() as session:
+            myskoda = MySkoda(session)
+            
+            # Login first to get tokens
+            await myskoda.connect(self.email, self.password)
+            
+            try:
+                # We need to find the vehicle first to get its object
+                vehicle = await myskoda.get_vehicle(vin)
+            except Exception as e:
+                logger.error(f"Failed to find vehicle {vin}: {e}")
+                raise
+
+            if action == "start_climatization":
+                temp = kwargs.get("target_temp")
+                if temp:
+                    await vehicle.set_target_temperature(temp)
+                await vehicle.start_air_conditioning()
+            
+            elif action == "stop_climatization":
+                await vehicle.stop_air_conditioning()
+            
+            elif action == "start_charging":
+                await vehicle.start_charging()
+            
+            elif action == "stop_charging":
+                await vehicle.stop_charging()
+            
+            elif action == "lock":
+                await vehicle.lock()
+            
+            elif action == "unlock":
+                if not self.spin:
+                    raise ValueError("SPIN is required to unlock vehicle")
+                await vehicle.unlock(self.spin)
+            
+            elif action == "honk_flash":
+                await vehicle.honk_flash()
+            
+            elif action == "wake":
+                # myskoda might handle wakeup implicitly, but let's see if there's an explicit call
+                # Often just fetching status wakes it, or there is a wake_up method
+                if hasattr(vehicle, "wake_up"):
+                    await vehicle.wake_up()
+                else:
+                    # Fallback or specific implementation
+                    pass
+            else:
+                raise ValueError(f"Unknown command action: {action}")
+        
+        # Session is closed automatically by async with
+
+    async def start_climatization(self, vin: str, target_temp: float):
+        await self._execute(vin, "start_climatization", target_temp=target_temp)
+
+    async def stop_climatization(self, vin: str):
+        await self._execute(vin, "stop_climatization")
+
+    async def start_charging(self, vin: str):
+        await self._execute(vin, "start_charging")
+
+    async def stop_charging(self, vin: str):
+        await self._execute(vin, "stop_charging")
+
+    async def lock(self, vin: str):
+        await self._execute(vin, "lock")
+
+    async def unlock(self, vin: str, spin: str | None = None):
+        # Allow overriding spin if passed explicitly
+        if spin:
+            self.spin = spin
+        await self._execute(vin, "unlock")
+
+    async def honk_flash(self, vin: str):
+        await self._execute(vin, "honk_flash")
+
+    async def wake(self, vin: str):
+        await self._execute(vin, "wake")
+

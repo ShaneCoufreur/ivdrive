@@ -197,7 +197,7 @@ class DataCollector:
             except Exception:
                 logger.error("Metadata fetch failed", exc_info=True)
             
-            task = asyncio.create_task(self.collect_vehicle(vehicle_id))
+            task = asyncio.create_task(self.collect_vehicle(vehicle_id, force=True))
             self._background_tasks.add(task)
             task.add_done_callback(self._handle_task_result)
 
@@ -288,7 +288,7 @@ class DataCollector:
             finally:
                 await api.close()
 
-    async def collect_vehicle(self, user_vehicle_id: UUID) -> None:
+    async def collect_vehicle(self, user_vehicle_id: UUID, force: bool = False) -> None:
         async with async_session() as session:
             stmt = (
                 select(UserVehicle)
@@ -440,7 +440,7 @@ class DataCollector:
                 # accumulating thousands of identical rows while the car sleeps overnight.
                 # On the very first poll after a collector restart (cache is empty) we
                 # always write so the DB reflects current reality.
-                if not car_active:
+                if not car_active and not force:
                     last_known = self._last_connection_state.get(user_vehicle_id)
                     state_changed = (last_known is None) or (last_known != is_online)
 

@@ -61,6 +61,28 @@ export function NotificationCenter() {
     }
   };
 
+  const renderMessageWithLinks = (text: string) => {
+    const urlRegex = /(https?:\/\/[^\s]+)/g;
+    const parts = text.split(urlRegex);
+    return parts.map((part, index) => {
+      if (part.match(urlRegex)) {
+        return (
+          <a
+            key={index}
+            href={part}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline text-iv-accent hover:text-iv-primary break-all"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {part}
+          </a>
+        );
+      }
+      return part;
+    });
+  };
+
   return (
     <div className="relative">
       <button
@@ -111,7 +133,7 @@ export function NotificationCenter() {
                       <div className="mt-0.5">{getIcon(ann.type)}</div>
                       <div className="flex-1 pr-4">
                         <p className="text-xs font-bold text-iv-text mb-0.5">{ann.title}</p>
-                        <p className="text-[11px] text-iv-muted leading-relaxed">{ann.message}</p>
+                        <p className="text-[11px] text-iv-muted leading-relaxed">{renderMessageWithLinks(ann.message)}</p>
                         <p className="text-[9px] text-iv-muted/50 mt-1.5">
                           {new Date(ann.created_at).toLocaleDateString()}
                         </p>

@@ -12,11 +12,10 @@ import { ChargingCostsDashboard } from "./ChargingCostsDashboard";
 import { CarOverviewDashboard } from "./CarOverviewDashboard";
 
 import { TripsDashboard } from "./TripsDashboard";
-import { LocationsDashboard } from "./LocationsDashboard";
+import { MovementDashboard } from "./MovementDashboard";
 import { DrivingStatisticsDashboard } from "./DrivingStatisticsDashboard";
 import { ChargingStatisticsDashboard } from "./ChargingStatisticsDashboard";
 import { MileageKMDashboard } from "./MileageKMDashboard";
-import { VisitedDashboard } from "./VisitedDashboard";
 
 export interface TimelineRange {
   from: Date;
@@ -38,11 +37,10 @@ export function StatisticsShell({ vehicleId }: { vehicleId: string }) {
     { id: "efficiency", label: "Winter Penalty" },
     { id: "economics", label: "Charging Economics" },
     { id: "trips", label: "Trips" },
-    { id: "locations", label: "Locations" },
+    { id: "movement", label: "Movement" },
     { id: "driving-stats", label: "Driving Stats" },
     { id: "charging-stats", label: "Charging Stats" },
     { id: "mileage", label: "Mileage" },
-    { id: "visited", label: "Visited" },
   ];
 
   const range: TimelineRange = {
@@ -96,8 +94,8 @@ export function StatisticsShell({ vehicleId }: { vehicleId: string }) {
           <Tabs.Content value="trips">
             <TripsDashboard vehicleId={vehicleId} dateRange={range} />
           </Tabs.Content>
-          <Tabs.Content value="locations">
-            <LocationsDashboard vehicleId={vehicleId} dateRange={range} />
+          <Tabs.Content value="movement">
+            <MovementDashboard vehicleId={vehicleId} dateRange={range} />
           </Tabs.Content>
           <Tabs.Content value="driving-stats">
             <DrivingStatisticsDashboard vehicleId={vehicleId} dateRange={range} />
@@ -107,9 +105,6 @@ export function StatisticsShell({ vehicleId }: { vehicleId: string }) {
           </Tabs.Content>
           <Tabs.Content value="mileage">
             <MileageKMDashboard vehicleId={vehicleId} dateRange={range} />
-          </Tabs.Content>
-          <Tabs.Content value="visited">
-            <VisitedDashboard vehicleId={vehicleId} dateRange={range} />
           </Tabs.Content>
         </div>
       </Tabs.Root>

@@ -19,6 +19,7 @@ import {
   Download,
   Upload,
   Database,
+  Sliders,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { api } from "@/lib/api";
@@ -132,7 +133,25 @@ export default function SettingsPage() {
   const [show2FADisable, setShow2FADisable] = useState(false);
   const [showRecoveryCodes, setShowRecoveryCodes] = useState(false);
 
+  const [showCommands, setShowCommands] = useState(false);
+
   useEffect(() => { if (user) setDisplayName(user.display_name || ""); }, [user]);
+
+  useEffect(() => {
+    const stored = localStorage.getItem("ivdrive_show_commands");
+    // Default to true if not set, or false? User asked to enable/disable.
+    // "lets put this Command under the settings control ... user can enable of disable"
+    // Given it's broken, default to false might be safer, but usually we respect existing.
+    // I'll default to false as requested by the context of "hard to test... hide it".
+    setShowCommands(stored === "true");
+  }, []);
+
+  const toggleCommands = () => {
+    const newValue = !showCommands;
+    setShowCommands(newValue);
+    localStorage.setItem("ivdrive_show_commands", String(newValue));
+    showToast("success", `Vehicle commands ${newValue ? "enabled" : "disabled"}`);
+  };
 
   const loadVehicles = useCallback(async () => {
     try { const data = await api.getVehicles(); setVehicles(data); }
@@ -302,6 +321,20 @@ export default function SettingsPage() {
       <h1 className="text-2xl font-bold text-iv-text">Settings</h1>
 
       {toast && <Toast status={toast.status} message={toast.message} onDismiss={() => setToast(null)} />}
+
+      {/* Preferences */}
+      <SectionCard icon={Sliders} title="Preferences">
+         <div className="flex items-center justify-between">
+            <div>
+               <p className="text-sm font-medium text-iv-text">Vehicle Commands (Beta)</p>
+               <p className="text-xs text-iv-muted mt-0.5">Enable remote control features (Lock, Unlock, Climate, etc.)</p>
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" checked={showCommands} onChange={toggleCommands} className="sr-only peer" />
+              <div className="w-11 h-6 bg-iv-border peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-iv-green transition-colors"></div>
+            </label>
+         </div>
+      </SectionCard>
 
       {/* Vehicles */}
       <SectionCard icon={Car} title="Vehicles">
