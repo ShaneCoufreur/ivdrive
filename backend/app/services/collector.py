@@ -637,11 +637,21 @@ class DataCollector:
                 # --- Vehicle status ---
                 if status_resp:
                     overall = status_resp.overall
+                    # Derive the movement state from conn_resp (not overall.locked which
+                    # returns the door lock status "YES"/"NO" — unrelated to driving state).
+                    if conn_resp and conn_resp.unreachable:
+                        _vs_state = "OFFLINE"
+                    elif conn_resp and conn_resp.in_motion:
+                        _vs_state = "DRIVING"
+                    elif conn_resp and conn_resp.ignition_on:
+                        _vs_state = "IGNITION_ON"
+                    else:
+                        _vs_state = "PARKED"
                     vs_data: dict = {
                         "user_vehicle_id": user_vehicle_id,
                         "first_date": now,
                         "last_date": now,
-                        "state": overall.locked if overall else None,
+                        "state": _vs_state,
                     }
                     if overall:
                         vs_data["doors_locked"] = overall.doors_locked or overall.locked
@@ -654,7 +664,35 @@ class DataCollector:
                         if isinstance(overall.lights, list):
                             on_lights = [lt.name for lt in overall.lights if lt.status and lt.status.lower() != "off"]
                             vs_data["lights_on"] = ",".join(on_lights) if on_lights else None
-                    session.add(VehicleState(**vs_data))
+                    # Extend the previous row's last_date if the state is unchanged
+                    # (avoids thousands of zero-duration rows; keeps durations accurate).
+                    # Only extend if the previous row is recent (within 2× parked interval).
+                    max_gap_s = max(vehicle.active_interval_seconds * 3, 300)
+                    prev_vs = await db.execute(
+                        select(VehicleState)
+                        .where(VehicleState.user_vehicle_id == user_vehicle_id)
+                        .order_by(VehicleState.first_date.desc())
+                        .limit(1)
+                    )
+                    prev_vs_row = prev_vs.scalar_one_or_none()
+                    if (
+                        prev_vs_row is not None
+                        and prev_vs_row.state == _vs_state
+                        and (now - prev_vs_row.last_date).total_seconds() <= max_gap_s
+                    ):
+                        await db.execute(
+                            update(VehicleState)
+                            .where(VehicleState.id == prev_vs_row.id)
+                            .values(
+                                last_date=now,
+                                doors_locked=vs_data.get("doors_locked"),
+                                doors_open=vs_data.get("doors_open"),
+                                windows_open=vs_data.get("windows_open"),
+                                lights_on=vs_data.get("lights_on"),
+                            )
+                        )
+                    else:
+                        session.add(VehicleState(**vs_data))
 
                 # --- Position ---
                 if position and position.positions:

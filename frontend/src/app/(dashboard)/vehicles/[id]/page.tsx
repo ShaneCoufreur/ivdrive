@@ -313,14 +313,14 @@ function WarningLightPill({ category, defects }: { category: string; defects: an
 
       {/* Tooltip for defects */}
       {!isOk && (
-        <div className="absolute top-full left-0 mt-2 z-50 hidden group-hover:block w-64 p-3 rounded-lg bg-iv-surface border border-iv-danger/50 shadow-xl backdrop-blur-xl">
+        <div className="absolute top-full left-0 mt-2 z-50 hidden group-hover:block w-48 p-2.5 rounded-lg bg-iv-charcoal border border-iv-danger/50 shadow-xl backdrop-blur-xl">
           <p className="text-xs font-semibold text-iv-danger mb-1.5 uppercase tracking-wider border-b border-iv-danger/20 pb-1">{name} Issues</p>
-          <ul className="space-y-2">
+          <ul className="space-y-1.5">
             {defects.map((d, i) => {
               const text = typeof d === "string" ? d : (d.description || d.text || JSON.stringify(d));
               return (
-                <li key={i} className="text-[10px] text-iv-text leading-tight flex items-start gap-1">
-                  <span className="text-iv-danger mt-0.5 shrink-0">•</span>
+                <li key={i} className="text-[10px] text-white leading-tight flex items-start gap-1">
+                  <span className="text-iv-danger mt-0.5">•</span>
                   <span>{text}</span>
                 </li>
               );
@@ -1021,20 +1021,6 @@ export default function VehicleDetailPage() {
         const totalActualCost = recentSessions.reduce((acc, s) => acc + ((s as any).actual_cost_eur || 0), 0);
         const weightedAvgCost = totalChargedKwh > 0 ? totalActualCost / totalChargedKwh : 0.25;
         const finalCostPerKwh = weightedAvgCost > 0 ? weightedAvgCost : 0.25;
-
-        // --- DEBUG LOGGING ---
-        console.log("--- Analytics Debug ---");
-        console.log("Recent Trips Count:", recentTrips.length);
-        console.log("Total Distance (km):", totalKm);
-        console.log("Total Energy Consumed (kWh):", totalKwh);
-        console.log("Calculated avgEff (kWh/100km):", avgEff);
-        console.log("Recent Sessions Count:", recentSessions.length);
-        console.log("Total Energy Added (kWh):", totalChargedKwh);
-        console.log("Total Actual Cost (€):", totalActualCost);
-        console.log("Calculated Weighted Avg Cost (€/kWh):", weightedAvgCost);
-        console.log("Final Cost Per kWh Used:", finalCostPerKwh);
-        console.log("Final Estimated Running Cost (€):", finalKwh * finalCostPerKwh);
-        console.log("-----------------------");
 
         const estCost = finalKwh * finalCostPerKwh;
         const costPer100km = totalKm > 0 ? (estCost / totalKm) * 100 : 0;

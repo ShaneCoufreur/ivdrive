@@ -54,11 +54,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch {
       setUser(null);
       api.clearTokens();
+    } finally {
+      setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    refreshUser().finally(() => setLoading(false));
+    refreshUser();
   }, [refreshUser]);
 
   const login = async (email: string, password: string) => {

@@ -30,6 +30,10 @@ export function DateRangePicker({ value, onChange, className }: DateRangePickerP
   const [open, setOpen] = useState(false);
   const [range, setRange] = useState<DateRange | undefined>({ from: value.from, to: value.to });
   const [isMobile, setIsMobile] = useState(false);
+  // mounted guard: prevents SSR/client hydration mismatch (#418) caused by
+  // formatting dates with new Date() which differs between server and client time.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 640);
@@ -56,7 +60,7 @@ export function DateRangePicker({ value, onChange, className }: DateRangePickerP
     setOpen(false);
   };
 
-  const displayText = value.from && value.to
+  const displayText = mounted && value.from && value.to
     ? `${format(value.from, "MMM d, yyyy")} – ${format(value.to, "MMM d, yyyy")}`
     : "Select date range";
 

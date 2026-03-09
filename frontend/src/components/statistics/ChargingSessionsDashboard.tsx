@@ -47,8 +47,8 @@ export function ChargingSessionsDashboard({ vehicleId }: { vehicleId: string }) 
 
   return (
     <div className="space-y-4">
-      {sessions.map((session, i) => (
-        <div key={i} className="glass rounded-xl p-4 sm:p-5 hover:bg-iv-surface/50 transition-colors border border-iv-border">
+      {sessions.map((session) => (
+        <div key={session.id} className="glass rounded-xl p-4 sm:p-5 hover:bg-iv-surface/50 transition-colors border border-iv-border">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-iv-green/10 text-iv-green">
@@ -116,8 +116,9 @@ export function ChargingSessionsDashboard({ vehicleId }: { vehicleId: string }) 
             
             <form onSubmit={handleEditSubmit} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-iv-text-muted mb-1">Provider Name</label>
+                <label htmlFor="cs-provider-name" className="block text-sm font-medium text-iv-text-muted mb-1">Provider Name</label>
                 <input 
+                  id="cs-provider-name"
                   type="text" 
                   value={editForm.provider_name}
                   onChange={e => setEditForm({...editForm, provider_name: e.target.value})}
@@ -127,8 +128,9 @@ export function ChargingSessionsDashboard({ vehicleId }: { vehicleId: string }) 
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-iv-text-muted mb-1">Energy Added (kWh)</label>
+                  <label htmlFor="cs-energy-kwh" className="block text-sm font-medium text-iv-text-muted mb-1">Energy Added (kWh)</label>
                   <input 
+                    id="cs-energy-kwh"
                     type="number" step="0.01"
                     value={editForm.energy_kwh}
                     onChange={e => setEditForm({...editForm, energy_kwh: e.target.value})}
@@ -137,8 +139,9 @@ export function ChargingSessionsDashboard({ vehicleId }: { vehicleId: string }) 
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-iv-text-muted mb-1">Total Paid (€)</label>
+                  <label htmlFor="cs-cost-eur" className="block text-sm font-medium text-iv-text-muted mb-1">Total Paid (€)</label>
                   <input 
+                    id="cs-cost-eur"
                     type="number" step="0.01"
                     value={editForm.actual_cost_eur}
                     onChange={e => setEditForm({...editForm, actual_cost_eur: e.target.value})}

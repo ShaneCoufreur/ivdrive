@@ -5,6 +5,18 @@ All notable changes to the iVDrive project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.14.1] - 2026-03-10
+### Fixed
+- **React Hydration (#418) Resolved**: Removed `next/font` (Inter) which caused server/client HTML mismatches leading to React error #418 on hard refresh. Inter is now loaded via a static `<link>` to Google Fonts in the root layout with a CSS variable (`--font-geist-sans: "Inter"`), producing identical HTML on server and client.
+- **Dashboard Mounted Guard**: `DashboardLayout` now renders an empty shell until client is mounted, preventing first-paint SSR/client mismatches in the dashboard subtree.
+- **StatisticsShell Date Initialization**: `dateRange` is now initialized inside `useEffect` (not as `new Date()` in initial state), eliminating server/client date text divergence.
+- **Duplicate `dynamic` Import**: Removed a duplicate `import dynamic from "next/dynamic"` in `vehicles/[id]/page.tsx` that caused a Turbopack build failure ("the name `dynamic` is defined multiple times").
+- **Analytics Debug Logs Removed**: Cleaned up leftover `console.log("--- Analytics Debug ---")` block from the vehicle overview analytics calculation — was logging to browser console on every render.
+- **Stable Chart Keys**: Replaced `key={i}` (array index) with stable string keys across `MovementDashboard`, `CarOverviewDashboard`, and `vehicles/[id]/page.tsx` to prevent unnecessary chart remounts.
+- **`EMPTY_STATS` Constant**: Replaced inline `[]` default prop with a module-level `EMPTY_STATS` constant to avoid identity-change re-renders on each render cycle.
+- **Accessibility Fixes (Settings Page)**: Fixed 13 missing `htmlFor`/`id` pairs and `aria-label` attributes on `<label>` elements in `settings/page.tsx`.
+- **`next/image` Migration**: Replaced bare `<img>` tags with `next/image` in `vehicles/[id]/page.tsx` for proper image optimisation and LCP improvements.
+
 ## [1.0.14] - 2026-03-08
 ### Fixed
 - **Manual Refresh Reliability**: Completely refactored the manual refresh mechanism to use a persistent Valkey List instead of fire-and-forget Pub/Sub. Refresh requests now survive collector crashes and connection drops.

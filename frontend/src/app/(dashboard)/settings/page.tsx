@@ -21,6 +21,7 @@ import {
   Database,
   Sliders,
 } from "lucide-react";
+import Image from "next/image";
 import { useAuth } from "@/lib/auth-context";
 import { api } from "@/lib/api";
 
@@ -329,7 +330,7 @@ export default function SettingsPage() {
                <p className="text-sm font-medium text-iv-text">Vehicle Commands (Beta)</p>
                <p className="text-xs text-iv-muted mt-0.5">Enable remote control features (Lock, Unlock, Climate, etc.)</p>
             </div>
-            <label className="relative inline-flex items-center cursor-pointer">
+            <label aria-label="Vehicle Commands toggle" className="relative inline-flex items-center cursor-pointer">
               <input type="checkbox" checked={showCommands} onChange={toggleCommands} className="sr-only peer" />
               <div className="w-11 h-6 bg-iv-border peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-iv-green transition-colors"></div>
             </label>
@@ -466,12 +467,12 @@ export default function SettingsPage() {
       <SectionCard icon={User} title="Profile">
         <div className="space-y-4">
           <div>
-            <label className="block text-xs font-medium text-iv-muted mb-1.5">Email</label>
-            <div className="rounded-lg bg-iv-surface border border-iv-border px-4 py-2.5 text-sm text-iv-muted">{user?.email}</div>
+            <label htmlFor="profile-email" className="block text-xs font-medium text-iv-muted mb-1.5">Email</label>
+            <div id="profile-email" className="rounded-lg bg-iv-surface border border-iv-border px-4 py-2.5 text-sm text-iv-muted">{user?.email}</div>
           </div>
           <div>
-            <label className="block text-xs font-medium text-iv-muted mb-1.5">Display Name</label>
-            <input type="text" value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Your name" className={inputClasses} />
+            <label htmlFor="profile-display-name" className="block text-xs font-medium text-iv-muted mb-1.5">Display Name</label>
+            <input id="profile-display-name" type="text" value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Your name" className={inputClasses} />
           </div>
           <div className="flex justify-end">
             <button onClick={handleProfileSave} disabled={profileSaving} className={btnPrimaryClasses}>
@@ -485,16 +486,16 @@ export default function SettingsPage() {
       <SectionCard icon={KeyRound} title="Change Password">
         <div className="space-y-4">
           <div>
-            <label className="block text-xs font-medium text-iv-muted mb-1.5">Current Password</label>
-            <input type="password" value={oldPassword} onChange={(e) => setOldPassword(e.target.value)} placeholder="Enter current password" className={inputClasses} />
+            <label htmlFor="pwd-current" className="block text-xs font-medium text-iv-muted mb-1.5">Current Password</label>
+            <input id="pwd-current" type="password" value={oldPassword} onChange={(e) => setOldPassword(e.target.value)} placeholder="Enter current password" className={inputClasses} />
           </div>
           <div>
-            <label className="block text-xs font-medium text-iv-muted mb-1.5">New Password</label>
-            <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="Enter new password" className={inputClasses} />
+            <label htmlFor="pwd-new" className="block text-xs font-medium text-iv-muted mb-1.5">New Password</label>
+            <input id="pwd-new" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="Enter new password" className={inputClasses} />
           </div>
           <div>
-            <label className="block text-xs font-medium text-iv-muted mb-1.5">Confirm New Password</label>
-            <input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} placeholder="Confirm new password" className={inputClasses} />
+            <label htmlFor="pwd-confirm" className="block text-xs font-medium text-iv-muted mb-1.5">Confirm New Password</label>
+            <input id="pwd-confirm" type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} placeholder="Confirm new password" className={inputClasses} />
           </div>
           <div className="flex justify-end">
             <button onClick={handlePasswordChange} disabled={passwordSaving || !oldPassword || !newPassword || !confirmPassword} className={btnPrimaryClasses}>
@@ -537,7 +538,7 @@ export default function SettingsPage() {
               <div className="flex flex-col items-center gap-4 text-center">
                 <p className="text-sm text-iv-text">Scan this QR code with your authenticator app (Google Authenticator, Authy, etc.)</p>
                 <div className="bg-white p-2 rounded-lg">
-                  <img src={twoFactorData.qr_code_base64} alt="2FA QR Code" className="w-48 h-48" />
+                  <Image src={twoFactorData.qr_code_base64} alt="2FA QR Code" width={192} height={192} />
                 </div>
                 <div className="w-full">
                   <p className="text-xs text-iv-muted mb-2">Or enter this secret manually:</p>
@@ -555,8 +556,9 @@ export default function SettingsPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-iv-muted mb-1.5">Verification Code</label>
+                <label htmlFor="2fa-code" className="block text-xs font-medium text-iv-muted mb-1.5">Verification Code</label>
                 <input
+                  id="2fa-code"
                   type="text"
                   maxLength={6}
                   value={twoFactorCode}
@@ -599,8 +601,8 @@ export default function SettingsPage() {
               </div>
               
               <div className="grid grid-cols-2 gap-2 bg-black/20 p-4 rounded-lg font-mono text-xs">
-                {twoFactorData.recovery_codes.map((code, idx) => (
-                  <div key={idx} className="text-iv-cyan">{code}</div>
+                {twoFactorData.recovery_codes.map((code) => (
+                  <div key={code} className="text-iv-cyan">{code}</div>
                 ))}
               </div>
 
@@ -622,8 +624,9 @@ export default function SettingsPage() {
             <div className="rounded-lg bg-iv-surface border border-iv-border p-4 space-y-4">
               <p className="text-sm text-iv-text">To disable 2FA, please enter your password to confirm.</p>
               <div>
-                <label className="block text-xs font-medium text-iv-muted mb-1.5">Current Password</label>
+                <label htmlFor="2fa-disable-pwd" className="block text-xs font-medium text-iv-muted mb-1.5">Current Password</label>
                 <input
+                  id="2fa-disable-pwd"
                   type="password"
                   value={twoFactorPassword}
                   onChange={(e) => setTwoFactorPassword(e.target.value)}
@@ -686,27 +689,27 @@ export default function SettingsPage() {
           {showAddForm ? (
             <div className="rounded-lg bg-iv-surface border border-iv-border p-4 space-y-3">
               <div>
-                <label className="block text-xs font-medium text-iv-muted mb-1">Name</label>
-                <input type="text" value={gfName} onChange={(e) => setGfName(e.target.value)} placeholder="Home, Work, etc." className={inputClasses} />
+                <label htmlFor="gf-name" className="block text-xs font-medium text-iv-muted mb-1">Name</label>
+                <input id="gf-name" type="text" value={gfName} onChange={(e) => setGfName(e.target.value)} placeholder="Home, Work, etc." className={inputClasses} />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-iv-muted mb-1">Latitude</label>
-                  <input type="number" step="any" value={gfLat} onChange={(e) => setGfLat(e.target.value)} placeholder="54.6872" className={inputClasses} />
+                  <label htmlFor="gf-lat" className="block text-xs font-medium text-iv-muted mb-1">Latitude</label>
+                  <input id="gf-lat" type="number" step="any" value={gfLat} onChange={(e) => setGfLat(e.target.value)} placeholder="54.6872" className={inputClasses} />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-iv-muted mb-1">Longitude</label>
-                  <input type="number" step="any" value={gfLon} onChange={(e) => setGfLon(e.target.value)} placeholder="25.2797" className={inputClasses} />
+                  <label htmlFor="gf-lon" className="block text-xs font-medium text-iv-muted mb-1">Longitude</label>
+                  <input id="gf-lon" type="number" step="any" value={gfLon} onChange={(e) => setGfLon(e.target.value)} placeholder="25.2797" className={inputClasses} />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-iv-muted mb-1">Radius (meters)</label>
-                  <input type="number" value={gfRadius} onChange={(e) => setGfRadius(e.target.value)} placeholder="100" className={inputClasses} />
+                  <label htmlFor="gf-radius" className="block text-xs font-medium text-iv-muted mb-1">Radius (meters)</label>
+                  <input id="gf-radius" type="number" value={gfRadius} onChange={(e) => setGfRadius(e.target.value)} placeholder="100" className={inputClasses} />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-iv-muted mb-1">Address (optional)</label>
-                  <input type="text" value={gfAddress} onChange={(e) => setGfAddress(e.target.value)} placeholder="123 Main St" className={inputClasses} />
+                  <label htmlFor="gf-address" className="block text-xs font-medium text-iv-muted mb-1">Address (optional)</label>
+                  <input id="gf-address" type="text" value={gfAddress} onChange={(e) => setGfAddress(e.target.value)} placeholder="123 Main St" className={inputClasses} />
                 </div>
               </div>
               <div className="flex justify-end gap-2 pt-1">
@@ -795,7 +798,7 @@ export default function SettingsPage() {
       {/* Delete confirmation modal */}
       {deleteModalId && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setDeleteModalId(null)} />
+          <div role="button" tabIndex={0} aria-label="Close modal" className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setDeleteModalId(null)} onKeyDown={(e) => e.key === "Escape" && setDeleteModalId(null)} />
           <div className="glass relative w-full max-w-sm rounded-2xl p-6">
             <h2 className="text-lg font-semibold text-iv-text mb-2">Delete Vehicle</h2>
             <p className="text-sm text-iv-muted mb-6">
@@ -818,7 +821,7 @@ export default function SettingsPage() {
       {/* Delete Account Modal */}
       {showDeleteAccountModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => !accountDeleting && setShowDeleteAccountModal(false)} />
+          <div role="button" tabIndex={0} aria-label="Close modal" className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => !accountDeleting && setShowDeleteAccountModal(false)} onKeyDown={(e) => e.key === "Escape" && !accountDeleting && setShowDeleteAccountModal(false)} />
           <div className="glass relative w-full max-w-sm rounded-2xl p-6">
             <h2 className="text-lg font-semibold text-iv-danger mb-2">Delete Account</h2>
             <p className="text-sm text-iv-text mb-4">

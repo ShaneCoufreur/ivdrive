@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import * as Tabs from "@radix-ui/react-tabs";
 import { subDays, startOfDay, endOfDay } from "date-fns";
 import { cn } from "@/lib/cn";
@@ -24,12 +24,18 @@ export interface TimelineRange {
 
 export function StatisticsShell({ vehicleId }: { vehicleId: string }) {
   const [activeTab, setActiveTab] = useState("car-overview");
-  
-  const now = new Date();
-  const [dateRange, setDateRange] = useState<DateRangeValue>({
-    from: startOfDay(subDays(now, 7)),
-    to: endOfDay(now),
-  });
+
+  // Avoid hydration mismatch (#418): server and client must render the same initial state.
+  // new Date() differs between server and client, so we set the real range only in useEffect.
+  const [dateRange, setDateRange] = useState<DateRangeValue | null>(null);
+
+  useEffect(() => {
+    const now = new Date();
+    setDateRange({
+      from: startOfDay(subDays(now, 7)),
+      to: endOfDay(now),
+    });
+  }, []);
 
   const TABS = [
     { id: "car-overview", label: "Car Overview" },
@@ -42,6 +48,16 @@ export function StatisticsShell({ vehicleId }: { vehicleId: string }) {
     { id: "charging-stats", label: "Charging Stats" },
     { id: "mileage", label: "Mileage" },
   ];
+
+  if (!dateRange) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-center py-24">
+          <div className="text-iv-muted text-sm">Loading period…</div>
+        </div>
+      </div>
+    );
+  }
 
   const range: TimelineRange = {
     from: dateRange.from,

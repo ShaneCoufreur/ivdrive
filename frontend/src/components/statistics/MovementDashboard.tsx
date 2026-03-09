@@ -144,6 +144,21 @@ function formatDurationMs(ms: number): string {
   return formatDuration(ms / 1000);
 }
 
+/** Safe time formatter — avoids SSR/client hydration mismatch from toLocaleTimeString. */
+function formatTime(date: Date): string {
+  const h = date.getHours();
+  const m = date.getMinutes().toString().padStart(2, "0");
+  const ampm = h >= 12 ? "PM" : "AM";
+  const hour = h % 12 || 12;
+  return `${hour}:${m} ${ampm}`;
+}
+
+/** Safe datetime formatter for map popups. */
+function formatDateTime(date: Date): string {
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${formatTime(date)}`;
+}
+
 function StayIcon({ label, isCharging }: { label: string; isCharging: boolean }) {
   if (isCharging) return <Zap size={15} className="text-iv-green" />;
   const l = label.toLowerCase();
@@ -286,8 +301,8 @@ export function MovementDashboard({ vehicleId, dateRange }: MovementDashboardPro
             <p className="text-sm text-iv-muted py-6 text-center">No distinct places detected</p>
           ) : (
             <div className="space-y-2">
-              {topPlaces.map((place, i) => (
-                <div key={i} className="flex items-center gap-3 p-3 rounded-xl bg-iv-surface/60 border border-iv-border/50">
+              {topPlaces.map((place) => (
+                <div key={`${place.lat.toFixed(4)},${place.lon.toFixed(4)}`} className="flex items-center gap-3 p-3 rounded-xl bg-iv-surface/60 border border-iv-border/50">
                   <div className={`p-2 rounded-full shrink-0 ${place.charging ? "bg-iv-green/10" : "bg-iv-cyan/10"}`}>
                     {place.charging ? <Zap size={14} className="text-iv-green" /> : <MapPin size={14} className="text-iv-cyan" />}
                   </div>
@@ -308,18 +323,18 @@ export function MovementDashboard({ vehicleId, dateRange }: MovementDashboardPro
           <div className="space-y-0.5 max-h-72 overflow-y-auto no-scrollbar">
             {timeline.length === 0 ? (
               <p className="text-sm text-iv-muted py-6 text-center">No activity detected</p>
-            ) : timeline.map((event, i) => {
+            ) : timeline.map((event) => {
               if (event.type === "stay") {
                 const s = event.data as StayEvent;
                 return (
-                  <div key={i} className="flex items-start gap-3 p-2.5 rounded-lg hover:bg-iv-surface/60 transition-colors">
+                  <div key={`stay-${s.arrivalTime.getTime()}`} className="flex items-start gap-3 p-2.5 rounded-lg hover:bg-iv-surface/60 transition-colors">
                     <div className={`mt-0.5 p-1.5 rounded-full shrink-0 ${s.isCharging ? "bg-iv-green/10" : "bg-iv-surface"}`}>
                       <StayIcon label={s.label} isCharging={s.isCharging} />
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-iv-text">{s.label}</p>
                       <p className="text-xs text-iv-muted">
-                        {s.arrivalTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} → {s.departureTime.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        {formatTime(s.arrivalTime)} → {formatTime(s.departureTime)}
                       </p>
                     </div>
                     <span className="text-xs font-bold text-iv-text shrink-0">{formatDurationMs(s.durationMs)}</span>
@@ -327,7 +342,7 @@ export function MovementDashboard({ vehicleId, dateRange }: MovementDashboardPro
                 );
               } else {
                 return (
-                  <div key={i} className="flex items-center gap-3 px-2.5 py-1.5 text-iv-muted">
+                  <div key={`move-${(event.data as MoveEvent).startTime.getTime()}`} className="flex items-center gap-3 px-2.5 py-1.5 text-iv-muted">
                     <div className="p-1.5 rounded-full bg-iv-surface/40 shrink-0"><Car size={13} className="text-iv-cyan" /></div>
                     <p className="text-xs flex-1 text-iv-cyan">Driving</p>
                   </div>
@@ -404,19 +419,19 @@ function MovementMap({ locations, stayEvents }: { locations: VisitedLocation[]; 
           <ZoomControl position="bottomleft" />
 
           {/* Position trail */}
-          {locations.map((loc, i) => (
-            <CircleMarker key={`p-${i}`}
+          {locations.map((loc) => (
+            <CircleMarker key={`p-${loc.timestamp}`}
               center={[loc.latitude, loc.longitude]}
               radius={2.5}
               pathOptions={{ color: "#60a5fa", fillColor: "#60a5fa", fillOpacity: 0.45, weight: 0 }} />
           ))}
 
           {/* Stay clusters — radius proportional to time */}
-          {stayEvents.map((s, i) => {
+          {stayEvents.map((s) => {
             const radius = 12 + (s.durationMs / maxMs) * 28;
             const color = s.isCharging ? "#4BA82E" : "#00D4FF";
             return (
-              <CircleMarker key={`s-${i}`}
+              <CircleMarker key={`s-${s.arrivalTime.getTime()}-${s.latitude.toFixed(4)}`}
                 center={[s.latitude, s.longitude]}
                 radius={radius}
                 pathOptions={{ color, fillColor: color, fillOpacity: 0.2, weight: 2 }}>
@@ -424,7 +439,7 @@ function MovementMap({ locations, stayEvents }: { locations: VisitedLocation[]; 
                   <div style={{ fontSize: 12, lineHeight: 1.5 }}>
                     <strong>{s.label}</strong><br />
                     {formatDurationMs(s.durationMs)}<br />
-                    <span style={{ color: "#888" }}>{s.arrivalTime.toLocaleString()}</span>
+                    <span style={{ color: "#888" }}>{formatDateTime(s.arrivalTime)}</span>
                   </div>
                 </Popup>
               </CircleMarker>
