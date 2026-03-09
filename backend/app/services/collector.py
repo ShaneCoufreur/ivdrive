@@ -16,7 +16,7 @@ from app.models.telemetry import (
     VehicleState, AirConditioningState, MaintenanceReport, OdometerReading,
     DriveLevel, DriveRange, Drive, BatteryHealth, PowerUsage, ChargingCurve,
     ChargingPower, DriveRangeEstimatedFull, DriveConsumption, ClimatizationState,
-    OutsideTemperature, BatteryTemperature, WeconnectError
+    OutsideTemperature, BatteryTemperature, WeconnectError, CollectorRawResponse
 )
 
 from app.models.vehicle import ConnectorSession, UserVehicle
@@ -668,7 +668,7 @@ class DataCollector:
                     # (avoids thousands of zero-duration rows; keeps durations accurate).
                     # Only extend if the previous row is recent (within 2× parked interval).
                     max_gap_s = max(vehicle.active_interval_seconds * 3, 300)
-                    prev_vs = await db.execute(
+                    prev_vs = await session.execute(
                         select(VehicleState)
                         .where(VehicleState.user_vehicle_id == user_vehicle_id)
                         .order_by(VehicleState.first_date.desc())
@@ -680,7 +680,7 @@ class DataCollector:
                         and prev_vs_row.state == _vs_state
                         and (now - prev_vs_row.last_date).total_seconds() <= max_gap_s
                     ):
-                        await db.execute(
+                        await session.execute(
                             update(VehicleState)
                             .where(VehicleState.id == prev_vs_row.id)
                             .values(
@@ -853,6 +853,35 @@ class DataCollector:
                         datetime=now,
                         error_text="Simulated Weconnect Error",
                     ))
+
+                # ── Raw API payload archive ─────────────────────────────────
+                # Serialize every response (pydantic → dict) and store as JSONB.
+                # NULL columns = endpoint was not called or returned an error.
+                def _to_raw(obj) -> dict | None:
+                    if obj is None:
+                        return None
+                    if isinstance(obj, dict):
+                        return obj
+                    try:
+                        return obj.model_dump(mode="json")
+                    except Exception:
+                        try:
+                            return obj.__dict__
+                        except Exception:
+                            return None
+
+                session.add(CollectorRawResponse(
+                    user_vehicle_id=user_vehicle_id,
+                    captured_at=now,
+                    raw_connection_status=_to_raw(conn_resp),
+                    raw_vehicle_status=_to_raw(status_resp),
+                    raw_charging=_to_raw(charging),
+                    raw_driving_range=_to_raw(driving),
+                    raw_position=_to_raw(position),
+                    raw_air_conditioning=_to_raw(ac_resp),
+                    raw_maintenance=_to_raw(maint_resp),
+                    raw_warning_lights=_to_raw(warning_lights_resp),
+                ))
 
                 # ── Commit & update timestamp ───────────────────────────────
                 cs.last_fetch_at = now

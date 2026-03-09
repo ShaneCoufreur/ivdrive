@@ -4,7 +4,9 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from typing import Any
 
 from app.models.base import Base
 
@@ -460,4 +462,36 @@ class WeconnectError(Base):
     error_text: Mapped[str | None] = mapped_column(String(255))
 
     user_vehicle: Mapped["UserVehicle"] = relationship()
+
+
+class CollectorRawResponse(Base):
+    """Stores the full raw API payloads for every collection cycle.
+
+    One row per vehicle per collection run. Each column holds the raw JSON
+    returned by a specific API endpoint (NULL when the endpoint was skipped
+    or returned an error). This table is the source-of-truth for debugging
+    parsing issues, discovering undocumented fields, and replaying history
+    for new metrics without re-querying the Skoda API.
+    """
+
+    __tablename__ = "collector_raw_responses"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    user_vehicle_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("user_vehicles.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    # Timestamp of when this collection cycle ran
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+
+    # Raw JSON blobs — one per API endpoint; NULL when endpoint was not called or failed
+    raw_connection_status: Mapped[Any | None] = mapped_column(JSONB)
+    raw_vehicle_status: Mapped[Any | None] = mapped_column(JSONB)
+    raw_charging: Mapped[Any | None] = mapped_column(JSONB)
+    raw_driving_range: Mapped[Any | None] = mapped_column(JSONB)
+    raw_position: Mapped[Any | None] = mapped_column(JSONB)
+    raw_air_conditioning: Mapped[Any | None] = mapped_column(JSONB)
+    raw_maintenance: Mapped[Any | None] = mapped_column(JSONB)
+    raw_warning_lights: Mapped[Any | None] = mapped_column(JSONB)
+
+    user_vehicle: Mapped["UserVehicle"] = relationship()  # noqa: F821
 
