@@ -113,6 +113,8 @@ class ChargingState(Base):
     battery_pct: Mapped[int | None] = mapped_column(Integer)
     remaining_range_m: Mapped[int | None] = mapped_column(Integer)
     charge_type: Mapped[str | None] = mapped_column(String(30))
+    max_charge_current_ac: Mapped[str | None] = mapped_column(String(50))
+    auto_unlock_plug_when_charged: Mapped[str | None] = mapped_column(String(50))
 
     user_vehicle: Mapped["UserVehicle"] = relationship(back_populates="charging_states")  # noqa: F821
 

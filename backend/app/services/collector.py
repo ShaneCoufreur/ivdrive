@@ -566,6 +566,9 @@ class DataCollector:
 
                 # ── Persist all telemetry ───────────────────────────────────
 
+                # max_gap_s: shared dedup threshold — used by all duration-state helpers below
+                max_gap_s = max(vehicle.active_interval_seconds * 3, 300)
+
                 # --- Connection status ---
                 # Always written during an ACTIVE cycle (we want the full picture in the DB).
                 # Also update the in-memory cache so the parked-state dedup logic stays
@@ -583,9 +586,6 @@ class DataCollector:
                 # --- Charging state ---
                 if charging and charging.status:
                     cs_data = {
-                        "user_vehicle_id": user_vehicle_id,
-                        "first_date": now,
-                        "last_date": now,
                         "state": charging.status.state,
                         "charge_type": charging.status.charge_type,
                         "charge_power_kw": charging.status.charge_power_in_kw,
@@ -594,10 +594,23 @@ class DataCollector:
                     }
                     if charging.settings:
                         cs_data["target_soc_pct"] = charging.settings.target_state_of_charge_in_percent
+                        cs_data["max_charge_current_ac"] = charging.settings.max_charge_current_ac
+                        cs_data["auto_unlock_plug_when_charged"] = charging.settings.auto_unlock_plug_when_charged
                     if charging.status.battery:
                         cs_data["battery_pct"] = charging.status.battery.state_of_charge_in_percent
                         cs_data["remaining_range_m"] = charging.status.battery.remaining_cruising_range_in_meters
-                    session.add(ChargingState(**cs_data))
+                    await _update_or_insert_duration_state(
+                        session, ChargingState, user_vehicle_id,
+                        match_keys={"state": charging.status.state},
+                        volatile_keys=[
+                            "charge_power_kw", "charge_rate_km_per_hour",
+                            "remaining_time_min", "target_soc_pct",
+                            "battery_pct", "remaining_range_m",
+                        ],
+                        now=now,
+                        max_gap_s=max_gap_s,
+                        **cs_data,
+                    )
 
                 # --- Warning lights ---
                 if warning_lights_resp and "warningLights" in warning_lights_resp:
@@ -658,16 +671,21 @@ class DataCollector:
                         if isinstance(overall.doors, list):
                             open_doors = [d.name for d in overall.doors if d.status and "open" in str(d.status).lower()]
                             vs_data["doors_open"] = ",".join(open_doors) if open_doors else None
+                        elif isinstance(overall.doors, str):
+                            vs_data["doors_open"] = overall.doors
                         if isinstance(overall.windows, list):
                             open_wins = [w.name for w in overall.windows if w.status and "open" in str(w.status).lower()]
                             vs_data["windows_open"] = ",".join(open_wins) if open_wins else None
+                        elif isinstance(overall.windows, str):
+                            vs_data["windows_open"] = overall.windows
                         if isinstance(overall.lights, list):
                             on_lights = [lt.name for lt in overall.lights if lt.status and lt.status.lower() != "off"]
                             vs_data["lights_on"] = ",".join(on_lights) if on_lights else None
+                        elif isinstance(overall.lights, str):
+                            vs_data["lights_on"] = overall.lights
                     # Extend the previous row's last_date if the state is unchanged
                     # (avoids thousands of zero-duration rows; keeps durations accurate).
-                    # Only extend if the previous row is recent (within 2× parked interval).
-                    max_gap_s = max(vehicle.active_interval_seconds * 3, 300)
+                    # Only extend if the previous row is recent (within max_gap_s seconds).
                     prev_vs = await session.execute(
                         select(VehicleState)
                         .where(VehicleState.user_vehicle_id == user_vehicle_id)
@@ -800,52 +818,99 @@ class DataCollector:
 
                 # --- Legacy Grafana metrics ---
                 if is_charging and charging and charging.status and charging.status.charge_power_in_kw is not None:
-                    session.add(ChargingPower(
-                        user_vehicle_id=user_vehicle_id,
-                        first_date=now,
-                        last_date=now,
+                    await _update_or_insert_duration_state(
+                        session, ChargingPower, user_vehicle_id,
+                        match_keys={"power": charging.status.charge_power_in_kw},
+                        volatile_keys=[],
+                        now=now,
+                        max_gap_s=max_gap_s,
                         power=charging.status.charge_power_in_kw,
-                    ))
+                    )
 
                 if driving and driving.primary_engine_range and driving.total_range_in_km is not None:
                     soc = float(driving.primary_engine_range.current_so_c_in_percent or 100)
                     if soc > 0 and drive_obj:
                         est_full = float(driving.total_range_in_km) / (soc / 100.0)
-                        session.add(DriveRangeEstimatedFull(
-                            drive_id=drive_obj.id,
-                            first_date=now,
-                            last_date=now,
-                            range_estimated_full=est_full,
-                        ))
-                        session.add(DriveConsumption(
-                            drive_id=drive_obj.id,
-                            first_date=now,
-                            last_date=now,
-                            consumption=16.5 + random.uniform(-2, 3),
-                        ))
+                        consumption_val = 16.5 + random.uniform(-2, 3)
+                        # DriveRangeEstimatedFull: scoped by drive_id (no user_vehicle_id column)
+                        prev_dref = await session.execute(
+                            select(DriveRangeEstimatedFull)
+                            .where(DriveRangeEstimatedFull.drive_id == drive_obj.id)
+                            .order_by(DriveRangeEstimatedFull.first_date.desc())
+                            .limit(1)
+                        )
+                        prev_dref_row = prev_dref.scalar_one_or_none()
+                        if (
+                            prev_dref_row is not None
+                            and abs(prev_dref_row.range_estimated_full - est_full) < 0.01
+                            and (now - prev_dref_row.last_date).total_seconds() <= max_gap_s
+                        ):
+                            await session.execute(
+                                update(DriveRangeEstimatedFull)
+                                .where(DriveRangeEstimatedFull.id == prev_dref_row.id)
+                                .values(last_date=now, range_estimated_full=est_full)
+                            )
+                        else:
+                            session.add(DriveRangeEstimatedFull(
+                                drive_id=drive_obj.id,
+                                first_date=now,
+                                last_date=now,
+                                range_estimated_full=est_full,
+                            ))
+                        # DriveConsumption: scoped by drive_id (no user_vehicle_id column)
+                        prev_dc = await session.execute(
+                            select(DriveConsumption)
+                            .where(DriveConsumption.drive_id == drive_obj.id)
+                            .order_by(DriveConsumption.first_date.desc())
+                            .limit(1)
+                        )
+                        prev_dc_row = prev_dc.scalar_one_or_none()
+                        if (
+                            prev_dc_row is not None
+                            and abs(prev_dc_row.consumption - consumption_val) < 0.01
+                            and (now - prev_dc_row.last_date).total_seconds() <= max_gap_s
+                        ):
+                            await session.execute(
+                                update(DriveConsumption)
+                                .where(DriveConsumption.id == prev_dc_row.id)
+                                .values(last_date=now, consumption=consumption_val)
+                            )
+                        else:
+                            session.add(DriveConsumption(
+                                drive_id=drive_obj.id,
+                                first_date=now,
+                                last_date=now,
+                                consumption=consumption_val,
+                            ))
 
                 if ac_resp and ac_resp.state:
-                    session.add(ClimatizationState(
-                        user_vehicle_id=user_vehicle_id,
-                        first_date=now,
-                        last_date=now,
+                    await _update_or_insert_duration_state(
+                        session, ClimatizationState, user_vehicle_id,
+                        match_keys={"state": ac_resp.state},
+                        volatile_keys=[],
+                        now=now,
+                        max_gap_s=max_gap_s,
                         state=ac_resp.state,
-                    ))
+                    )
 
                 if temp_c is not None:
-                    session.add(OutsideTemperature(
-                        user_vehicle_id=user_vehicle_id,
-                        first_date=now,
-                        last_date=now,
+                    await _update_or_insert_duration_state(
+                        session, OutsideTemperature, user_vehicle_id,
+                        match_keys={"outside_temperature": temp_c},
+                        volatile_keys=[],
+                        now=now,
+                        max_gap_s=max_gap_s,
                         outside_temperature=temp_c,
-                    ))
+                    )
 
-                session.add(BatteryTemperature(
-                    user_vehicle_id=user_vehicle_id,
-                    first_date=now,
-                    last_date=now,
+                await _update_or_insert_duration_state(
+                    session, BatteryTemperature, user_vehicle_id,
+                    match_keys={"battery_temperature": battery_temp},
+                    volatile_keys=[],
+                    now=now,
+                    max_gap_s=max_gap_s,
                     battery_temperature=battery_temp,
-                ))
+                )
 
                 if random.random() < 0.01:
                     session.add(WeconnectError(
@@ -927,6 +992,75 @@ class DataCollector:
         if self._scheduler.get_job(job_id):
             self._scheduler.remove_job(job_id)
             logger.info("Unregistered collection job %s", job_id)
+
+
+async def _update_or_insert_duration_state(
+    session,
+    model_cls,
+    user_vehicle_id: UUID,
+    match_keys: dict,
+    volatile_keys: list[str],
+    now: datetime,
+    max_gap_s: int,
+    extra_filter=None,
+    **kwargs,
+) -> None:
+    """Upsert helper for duration-state tables (first_date / last_date pattern).
+
+    If the most recent row for `user_vehicle_id` matches all `match_keys` and its
+    `last_date` is within `max_gap_s` seconds of `now`, we UPDATE its `last_date`
+    and any `volatile_keys` fields (e.g. charge_power_kw, battery_pct).
+    Otherwise, we INSERT a new row with first_date=now, last_date=now, plus all
+    kwargs as column values.
+
+    Args:
+        session:         SQLAlchemy async session.
+        model_cls:       ORM model class (e.g. ChargingState).
+        user_vehicle_id: FK for the owner vehicle.
+        match_keys:      Dict of column_name → value that must match to consider
+                         the row "the same state" (e.g. {"state": "READY_FOR_CHARGING"}).
+        volatile_keys:   List of column names to refresh on UPDATE (e.g. battery_pct).
+        now:             Current UTC timestamp.
+        max_gap_s:       Max age of last_date (seconds) before we start a new row.
+        extra_filter:    Optional additional SQLAlchemy WHERE clause (e.g. for
+                         drive_id-scoped tables that lack user_vehicle_id).
+        **kwargs:        Full set of column values for a new INSERT row.
+    """
+    # Build the query for the most recent row
+    pk_col = getattr(model_cls, "user_vehicle_id", None)
+    query = select(model_cls)
+    if pk_col is not None:
+        query = query.where(model_cls.user_vehicle_id == user_vehicle_id)
+    if extra_filter is not None:
+        query = query.where(extra_filter)
+    query = query.order_by(model_cls.first_date.desc()).limit(1)
+
+    result = await session.execute(query)
+    prev = result.scalar_one_or_none()
+
+    # Check if we can extend the existing row
+    if prev is not None:
+        gap = (now - prev.last_date).total_seconds()
+        keys_match = all(getattr(prev, k, object()) == v for k, v in match_keys.items())
+        if keys_match and gap <= max_gap_s:
+            update_vals: dict = {"last_date": now}
+            for vk in volatile_keys:
+                if vk in kwargs:
+                    update_vals[vk] = kwargs[vk]
+            await session.execute(
+                update(model_cls)
+                .where(model_cls.id == prev.id)
+                .values(**update_vals)
+            )
+            return
+
+    # No matching row or gap too large — insert fresh
+    session.add(model_cls(
+        user_vehicle_id=user_vehicle_id,
+        first_date=now,
+        last_date=now,
+        **kwargs,
+    ))
 
 
 async def _safe(coro, label: str, vehicle_id: UUID):
