@@ -28,24 +28,28 @@ def create_password_reset_token(subject: str) -> str:
     ``subject`` is the user's email address (not user ID) so the token can be
     verified without a DB round-trip when decoding.
     """
-    expire = datetime.now(UTC) + timedelta(minutes=30)
-    to_encode = {"sub": subject, "exp": expire, "type": "password_reset"}
+    now = datetime.now(UTC)
+    expire = now + timedelta(minutes=30)
+    to_encode = {"sub": subject, "iat": now, "exp": expire, "type": "password_reset"}
     return jwt.encode(to_encode, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
 
-def decode_password_reset_token(token: str) -> str:
+def decode_password_reset_token(token: str) -> tuple[str, datetime | None]:
     """Decode a password-reset JWT.
 
-    Returns the ``sub`` claim (email) on success.
+    Returns a tuple of (email, iat_datetime) on success.
     Raises ``JWTError`` on invalid/expired token or wrong token type.
     """
     payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
     if payload.get("type") != "password_reset":
         raise JWTError("Invalid token type")
     sub = payload.get("sub")
+    iat = payload.get("iat")
     if not sub:
         raise JWTError("Missing subject in token")
-    return sub
+    
+    iat_dt = datetime.fromtimestamp(iat, tz=UTC) if iat else None
+    return sub, iat_dt
 
 
 def create_2fa_token(subject: str) -> str:

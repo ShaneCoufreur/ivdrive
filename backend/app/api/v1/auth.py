@@ -378,7 +378,7 @@ async def reset_password(body: ResetPasswordRequest, db: AsyncSession = Depends(
     The token is short-lived (30 min) and cannot be reused after expiry.
     """
     try:
-        email = decode_password_reset_token(body.token)
+        email, iat_dt = decode_password_reset_token(body.token)
     except JWTError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -394,8 +394,15 @@ async def reset_password(body: ResetPasswordRequest, db: AsyncSession = Depends(
             detail="Invalid or expired password reset token.",
         )
 
+    # Invalidate token if user's record was updated after the token was issued
+    if iat_dt and user.updated_at and user.updated_at > iat_dt:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Token has been invalidated by a more recent account update.",
+        )
+
     user.password_hash = get_password_hash(body.new_password)
-    await db.flush()
+    await db.commit()
     return {"detail": "Password has been reset successfully. You can now log in with your new password."}
 
 

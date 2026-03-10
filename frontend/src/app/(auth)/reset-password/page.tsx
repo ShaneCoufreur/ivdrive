@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { Lock, Eye, EyeOff, CheckCircle, AlertCircle, ArrowLeft } from "lucide-react";
@@ -20,6 +20,14 @@ function ResetPasswordForm() {
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState("");
 
+  useEffect(() => {
+    let timer: NodeJS.Timeout;
+    if (success) {
+      timer = setTimeout(() => router.push("/login"), 3000);
+    }
+    return () => clearTimeout(timer);
+  }, [success, router]);
+
   const passwordsMatch = password === confirmPassword;
   const isValid = password.length >= 8 && confirmPassword.length > 0 && passwordsMatch;
 
@@ -32,8 +40,6 @@ function ResetPasswordForm() {
     try {
       await api.resetPassword(token, password);
       setSuccess(true);
-      // Auto-redirect to login after 3 seconds
-      setTimeout(() => router.push("/login"), 3000);
     } catch (err: unknown) {
       const message =
         err instanceof Error ? err.message : "Failed to reset password. The link may have expired.";
