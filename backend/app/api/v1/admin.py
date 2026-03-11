@@ -205,6 +205,46 @@ async def delete_user(
     await db.commit()
 
 
+from app.models.vehicle import UserVehicle
+from app.services.events import publish_vehicle_refresh
+
+
+@router.post("/users/{user_id}/refresh-vehicles", status_code=status.HTTP_202_ACCEPTED)
+async def admin_refresh_user_vehicles(
+    user_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_superuser),
+):
+    """(Admin) Trigger a data collection refresh for all vehicles owned by a specific user."""
+    result = await db.execute(select(UserVehicle).where(UserVehicle.user_id == user_id))
+    vehicles = result.scalars().all()
+
+    if not vehicles:
+        return {"status": "no_vehicles", "message": "User has no vehicles to refresh."}
+
+    for vehicle in vehicles:
+        await publish_vehicle_refresh(str(vehicle.id))
+
+    return {"status": "queued", "message": f"Queued refresh for {len(vehicles)} vehicle(s) for user {user_id}."}
+
+
+@router.post("/vehicles/{vehicle_id}/refresh", status_code=status.HTTP_202_ACCEPTED)
+async def admin_refresh_vehicle(
+    vehicle_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_superuser),
+):
+    """(Admin) Trigger a one-time out-of-band full telemetry fetch for any vehicle."""
+    result = await db.execute(select(UserVehicle).where(UserVehicle.id == vehicle_id))
+    vehicle = result.scalar_one_or_none()
+
+    if not vehicle:
+        raise HTTPException(status_code=404, detail="Vehicle not found")
+
+    await publish_vehicle_refresh(str(vehicle.id))
+    return {"status": "queued", "message": f"Manual refresh triggered for vehicle {vehicle.id}"}
+
+
 # ── Announcement endpoints ─────────────────────────────────────────────────────
 
 
@@ -270,3 +310,22 @@ async def delete_announcement(
         raise HTTPException(status_code=404, detail="Announcement not found")
     await db.delete(announcement)
     await db.commit()
+
+from app.models.vehicle import UserVehicle
+from app.services.events import publish_vehicle_refresh
+
+@router.post("/vehicles/{vehicle_id}/refresh", status_code=status.HTTP_202_ACCEPTED)
+async def admin_refresh_vehicle(
+    vehicle_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_superuser),
+):
+    """(Admin) Trigger a one-time out-of-band full telemetry fetch for any vehicle."""
+    result = await db.execute(select(UserVehicle).where(UserVehicle.id == vehicle_id))
+    vehicle = result.scalar_one_or_none()
+    
+    if not vehicle:
+        raise HTTPException(status_code=404, detail="Vehicle not found")
+
+    await publish_vehicle_refresh(str(vehicle_id))
+    return {"status": "queued", "message": f"Manual refresh triggered for vehicle {vehicle_id}"}

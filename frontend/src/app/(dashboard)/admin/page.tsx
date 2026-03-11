@@ -25,6 +25,7 @@ import {
   Bell,
   PlusCircle,
   Info,
+  RefreshCw,
 } from "lucide-react";
 
 // ── Types ──
@@ -252,6 +253,18 @@ export default function AdminPage() {
     }
   };
 
+  const handleRefreshUserVehicles = async (userId: string) => {
+    setActionLoading(`refresh-${userId}`);
+    try {
+      const res = await api.adminRefreshUserVehicles(userId);
+      showToast(res.message || `Refresh queued for user ${userId}`);
+    } catch (e: unknown) {
+      showToast(e instanceof Error ? e.message : "Refresh failed", "err");
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   const handleCreateAnnouncement = async () => {
     if (!annForm.title.trim() || !annForm.message.trim()) {
       showToast("Title and message are required", "err");
@@ -449,6 +462,7 @@ export default function AdminPage() {
           onPromote={handlePromote}
           onDemote={handleDemote}
           onDelete={handleDeleteUser}
+          onRefresh={handleRefreshUserVehicles}
         />
       ) : (
         <AnnouncementsPanel
@@ -762,6 +776,7 @@ function UsersTable({
   onPromote,
   onDemote,
   onDelete,
+  onRefresh,
 }: {
   users: AdminUser[];
   currentUserId: string;
@@ -770,6 +785,7 @@ function UsersTable({
   onPromote: (email: string) => void;
   onDemote: (email: string) => void;
   onDelete: (u: AdminUser) => void;
+  onRefresh: (userId: string) => void;
 }) {
   if (users.length === 0) {
     return (
@@ -838,6 +854,18 @@ function UsersTable({
                     <span className="text-xs text-iv-muted/50">—</span>
                   ) : (
                     <div className="flex items-center justify-end gap-2">
+                      <button
+                        onClick={() => onRefresh(u.id)}
+                        disabled={!!actionLoading}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-iv-cyan/10 text-iv-cyan border border-iv-cyan/20 hover:bg-iv-cyan/20 transition-colors disabled:opacity-50"
+                      >
+                        {actionLoading === `refresh-${u.id}` ? (
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <RefreshCw className="w-3 h-3" />
+                        )}
+                        Refresh
+                      </button>
                       {u.is_superuser ? (
                         <button
                           onClick={() => onDemote(u.email)}

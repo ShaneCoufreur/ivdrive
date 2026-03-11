@@ -229,6 +229,12 @@ export const api = {
     return res.json();
   },
 
+  async adminRefreshUserVehicles(userId: string) {
+    const res = await apiFetch(`/api/v1/admin/users/${userId}/refresh-vehicles`, { method: "POST" });
+    if (!res.ok) throw new Error((await res.json()).detail || "Failed to trigger refresh");
+    return res.json();
+  },
+
   async adminListUsers() {
     const res = await apiFetch("/api/v1/admin/users");
     if (!res.ok) throw new Error("Failed to fetch users");

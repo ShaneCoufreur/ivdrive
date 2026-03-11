@@ -537,12 +537,11 @@ async def get_time_budget(
     """
     await get_user_vehicle(user.id, vehicle_id, db)
 
-    # -- Vehicle state durations (only rows that are real intervals) --
+    # -- Vehicle state durations (from view) --
     vs_sql = """
-        SELECT state, SUM(EXTRACT(EPOCH FROM (last_date - first_date))) AS total_seconds
-        FROM vehicle_states
+        SELECT state, SUM(duration_seconds) AS total_seconds
+        FROM v_vehicle_state_durations
         WHERE user_vehicle_id = :vid
-          AND last_date > first_date
         GROUP BY state
     """
     vs_result = await db.execute(__import__("sqlalchemy").text(vs_sql), {"vid": str(vehicle_id)})
@@ -552,26 +551,11 @@ async def get_time_budget(
     for row in vs_rows:
         state_seconds[row[0].upper()] = float(row[1] or 0)
 
-    # -- Charging: reconstruct sessions from snapshots --
+    # -- Charging: sum durations from analytics view --
     cs_sql = """
-        WITH pts AS (
-            SELECT first_date AS ts,
-                   LAG(first_date) OVER (ORDER BY first_date) AS prev_ts
-            FROM charging_states
-            WHERE user_vehicle_id = :vid AND state = 'CHARGING'
-        ),
-        session_ids AS (
-            SELECT ts,
-                   SUM(CASE WHEN prev_ts IS NULL OR EXTRACT(EPOCH FROM (ts - prev_ts)) > 1800
-                       THEN 1 ELSE 0 END) OVER (ORDER BY ts) AS sid
-            FROM pts
-        ),
-        sessions AS (
-            SELECT sid, MIN(ts) AS started, MAX(ts) AS ended
-            FROM session_ids GROUP BY sid
-        )
-        SELECT COALESCE(SUM(EXTRACT(EPOCH FROM (ended - started)) + 300), 0) AS total_seconds
-        FROM sessions
+        SELECT COALESCE(SUM(duration_seconds), 0) AS total_seconds
+        FROM v_charging_sessions_analytics
+        WHERE user_vehicle_id = :vid
     """
     cs_result = await db.execute(__import__("sqlalchemy").text(cs_sql), {"vid": str(vehicle_id)})
     charging_seconds = float(cs_result.scalar() or 0)
