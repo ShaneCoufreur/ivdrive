@@ -41,8 +41,10 @@ function MapAutoBounds({ trips }: { trips: TripAnalyticsItem[] }) {
     if (trips.length === 0) return;
     const bounds: [number, number][] = [];
     trips.forEach(t => {
-      if (t.start_latitude && t.start_longitude) bounds.push([t.start_latitude, t.start_longitude]);
-      if (t.destination_latitude && t.destination_longitude) bounds.push([t.destination_latitude, t.destination_longitude]);
+      const pos = getPolylinePositions(t);
+      if (pos) {
+        bounds.push(pos[0], pos[1]);
+      }
     });
     if (bounds.length > 0) map.fitBounds(bounds, { padding: [30, 30] });
   }, [trips, map]);
@@ -53,8 +55,9 @@ function MapController({ activeTripId, trips }: { activeTripId: number | null, t
     const map = useMap();
     useEffect(() => {
         const activeTrip = trips.find(t => t.trip_id === activeTripId);
-        if (activeTrip && activeTrip.start_latitude && activeTrip.start_longitude) {
-            map.flyTo([activeTrip.start_latitude, activeTrip.start_longitude], 13);
+        const pos = activeTrip ? getPolylinePositions(activeTrip) : null;
+        if (pos) {
+            map.flyTo(pos[0], 13);
         }
     }, [activeTripId, trips, map]);
     return null;
@@ -66,6 +69,27 @@ function formatDuration(minutes: number): string {
   const m = Math.round(minutes % 60);
   if (h > 0) return `${h}h ${m}m`;
   return `${m}m`;
+}
+
+/** Returns true only if the value is a valid number for lat/lng (not null, undefined, or NaN). */
+function isValidCoord(v: unknown): v is number {
+  return typeof v === "number" && Number.isFinite(v);
+}
+
+/** Builds a Polyline positions array only when both start and end are valid; otherwise returns null. */
+function getPolylinePositions(trip: TripAnalyticsItem): [[number, number], [number, number]] | null {
+  if (
+    !isValidCoord(trip.start_latitude) ||
+    !isValidCoord(trip.start_longitude) ||
+    !isValidCoord(trip.destination_latitude) ||
+    !isValidCoord(trip.destination_longitude)
+  ) {
+    return null;
+  }
+  return [
+    [trip.start_latitude, trip.start_longitude],
+    [trip.destination_latitude, trip.destination_longitude],
+  ];
 }
 
 // --- Main Component ---
@@ -272,15 +296,13 @@ export function TripsDashboard({ vehicleId, dateRange }: TripsDashboardProps) {
                 url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
               />
               {displayTrips.map(trip => {
-                if (trip.start_latitude == null || trip.start_longitude == null || trip.destination_latitude == null || trip.destination_longitude == null) return null;
+                const positions = getPolylinePositions(trip);
+                if (!positions) return null;
                 const isActive = trip.trip_id === activeTripId;
                 return (
                     <Polyline
                       key={trip.trip_id}
-                      positions={[
-                        [trip.start_latitude, trip.start_longitude],
-                        [trip.destination_latitude, trip.destination_longitude]
-                      ]}
+                      positions={positions}
                       pathOptions={{
                         color: isActive ? "#00f3ff" : "#475569",
                         weight: isActive ? 4 : 2,
