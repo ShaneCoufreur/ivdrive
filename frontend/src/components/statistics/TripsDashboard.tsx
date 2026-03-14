@@ -36,19 +36,8 @@ const useReverseGeocoding = (trips: TripAnalyticsItem[]) => {
 
   const fetchLocationName = useCallback(async (lat: number, lon: number) => {
     try {
-      const response = await fetch(
-        `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}`,
-        { headers: { 'User-Agent': 'iVDrive-App (Contact: info@ivdrive.eu)' } }
-      );
-      
-      if (response.status === 429) {
-        // Rate limited - wait 1.5s and retry once
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        return fetchLocationName(lat, lon);
-      }
-
-      const data = await response.json();
-      return data.display_name || "Unknown Location";
+      const data = await api.reverseGeocode(lat, lon);
+      return data.display_name || "Location";
     } catch (error) {
       return "Location";
     }
@@ -71,12 +60,11 @@ const useReverseGeocoding = (trips: TripAnalyticsItem[]) => {
       const newLocations = new Map<string, string>();
       const entries = Array.from(uniqueCoords.entries());
       
+      // With backend caching, we can run these in parallel or small chunks
+      // but let's keep it sequential to be safe with backend capacity
       for (const [key, { lat, lon }] of entries) {
-        // Essential: Respect Nominatim's 1 request per second policy
         const name = await fetchLocationName(lat, lon);
-        newLocations.set(key, name.split(",")[0] || name);
-        // Small delay between successful requests to prevent 429s in the first place
-        if (entries.length > 1) await new Promise(resolve => setTimeout(resolve, 1100));
+        newLocations.set(key, name);
       }
       setLocations(newLocations);
     };

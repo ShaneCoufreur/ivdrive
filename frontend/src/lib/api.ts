@@ -865,4 +865,13 @@ export const api = {
     if (!res.ok) throw new Error("Failed to fetch advanced overview");
     return res.json();
   },
+
+  async reverseGeocode(latitude: number, longitude: number): Promise<{ display_name: string }> {
+    const res = await apiFetch("/api/v1/geo/reverse", {
+      method: "POST",
+      body: JSON.stringify({ latitude, longitude }),
+    });
+    if (!res.ok) return { display_name: "Location" };
+    return res.json();
+  },
 };
