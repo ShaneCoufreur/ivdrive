@@ -108,7 +108,7 @@ export function StatisticsShell({ vehicleId }: { vehicleId: string }) {
           </Tabs.Content>
           
           <Tabs.Content value="trips">
-            <TripsDashboard vehicleId={vehicleId} />
+            <TripsDashboard vehicleId={vehicleId} dateRange={range} />
           </Tabs.Content>
           <Tabs.Content value="movement">
             <MovementDashboard vehicleId={vehicleId} dateRange={range} />

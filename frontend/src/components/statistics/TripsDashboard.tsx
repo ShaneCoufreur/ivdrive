@@ -11,6 +11,7 @@ import "leaflet/dist/leaflet.css";
 // --- Types ---
 export interface TripsDashboardProps {
   vehicleId: string;
+  dateRange?: { from: Date; to: Date }; // Optional: if provided, behaves like the "old" stats view
 }
 
 interface TripAnalyticsItem {
@@ -115,27 +116,34 @@ function MapController({ activeTripId, trips }: { activeTripId: number | null, t
 
 
 // --- Main Component ---
-export function TripsDashboard({ vehicleId }: TripsDashboardProps) {
+export function TripsDashboard({ vehicleId, dateRange }: TripsDashboardProps) {
   const [allTrips, setAllTrips] = useState<TripAnalyticsItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTripId, setActiveTripId] = useState<number | null>(null);
   
-  // Year/Month selection
+  // Year/Month selection (only used when dateRange is NOT provided)
   const [selectedYear, setSelectedYear] = useState<number>(getYear(new Date()));
   const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
   const [visibleCount, setVisibleCount] = useState(10);
 
   const { getLocationName } = useReverseGeocoding(allTrips);
 
-  // Initial load: Fetch all trips for building navigation
+  // Initial load
   useEffect(() => {
     const fetchInitialData = async () => {
       setLoading(true);
       try {
-        const list = await api.getTripsAnalytics(vehicleId, 2000);
+        const fromStr = dateRange?.from?.toISOString();
+        const toStr = dateRange?.to?.toISOString();
+        
+        // If dateRange is provided, we only fetch that slice (behaving like the "old" view)
+        // If dateRange is NOT provided, we fetch a large batch for the "new" hierarchical view
+        const limit = dateRange ? 200 : 2000;
+        const list = await api.getTripsAnalytics(vehicleId, limit, fromStr, toStr);
         setAllTrips(list ?? []);
         
-        if (list && list.length > 0) {
+        // Auto-select latest year/month only for hierarchical mode
+        if (!dateRange && list && list.length > 0) {
           const latest = list[0];
           const d = parseISO(latest.start_time);
           setSelectedYear(getYear(d));
@@ -148,10 +156,11 @@ export function TripsDashboard({ vehicleId }: TripsDashboardProps) {
       }
     };
     fetchInitialData();
-  }, [vehicleId]);
+  }, [vehicleId, dateRange?.from, dateRange?.to]);
 
-  // Hierarchical Structure
+  // Hierarchical Structure (only for navigation mode)
   const structure = useMemo(() => {
+    if (dateRange) return [];
     const years: Record<number, Set<number>> = {};
     allTrips.forEach(t => {
       const d = parseISO(t.start_time);
@@ -166,27 +175,29 @@ export function TripsDashboard({ vehicleId }: TripsDashboardProps) {
         months: Array.from(months).sort((a, b) => b - a)
       }))
       .sort((a, b) => b.year - a.year);
-  }, [allTrips]);
+  }, [allTrips, dateRange]);
 
   // Filtered trips for the active view
-  const currentMonthTrips = useMemo(() => {
+  const displayTrips = useMemo(() => {
+    if (dateRange) return allTrips; // "Old" mode: show everything in the dateRange
     if (selectedMonth === null) return [];
     return allTrips.filter(t => {
       const d = parseISO(t.start_time);
       return getYear(d) === selectedYear && getMonth(d) === selectedMonth;
     });
-  }, [allTrips, selectedYear, selectedMonth]);
+  }, [allTrips, selectedYear, selectedMonth, dateRange]);
 
   const visibleTrips = useMemo(() => {
-    return currentMonthTrips.slice(0, visibleCount);
-  }, [currentMonthTrips, visibleCount]);
+    if (dateRange) return displayTrips; // "Old" mode: no lazy loading
+    return displayTrips.slice(0, visibleCount);
+  }, [displayTrips, visibleCount, dateRange]);
 
   const summary = useMemo(() => ({
-    totalTrips: currentMonthTrips.length,
-    totalDistance: currentMonthTrips.reduce((acc, trip) => acc + trip.distance_km, 0),
-    totalTime: currentMonthTrips.reduce((acc, trip) => acc + trip.duration_minutes, 0),
-    avgEfficiency: currentMonthTrips.filter(t => t.efficiency_kwh_100km).reduce((acc, trip, _, arr) => acc + (trip.efficiency_kwh_100km || 0) / arr.length, 0)
-  }), [currentMonthTrips]);
+    totalTrips: displayTrips.length,
+    totalDistance: displayTrips.reduce((acc, trip) => acc + trip.distance_km, 0),
+    totalTime: displayTrips.reduce((acc, trip) => acc + trip.duration_minutes, 0),
+    avgEfficiency: displayTrips.filter(t => t.efficiency_kwh_100km).reduce((acc, trip, _, arr) => acc + (trip.efficiency_kwh_100km || 0) / arr.length, 0)
+  }), [displayTrips]);
 
   const handleMonthClick = (year: number, month: number) => {
     setSelectedYear(year);
@@ -199,41 +210,47 @@ export function TripsDashboard({ vehicleId }: TripsDashboardProps) {
   }
 
   if (allTrips.length === 0) {
-    return <div className="py-24 text-center text-sm text-iv-muted">No trips recorded yet.</div>;
+    return <div className="py-24 text-center text-sm text-iv-muted">No trips recorded for the selected period.</div>;
   }
 
   return (
     <div className="space-y-6">
-      {/* --- Hierarchical Navigation --- */}
-      <div className="flex flex-wrap gap-2 items-center">
-        {structure.map(({ year, months }) => (
-          <div key={year} className="flex items-center gap-1 bg-iv-surface/40 rounded-full p-1 border border-iv-border/30">
-            <div className="px-3 py-1 text-xs font-bold text-iv-muted uppercase tracking-tighter">{year}</div>
-            <div className="flex gap-1">
-              {months.map(m => {
-                const isActive = selectedYear === year && selectedMonth === m;
-                return (
-                  <button
-                    key={m}
-                    onClick={() => handleMonthClick(year, m)}
-                    className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${isActive ? 'bg-iv-cyan text-iv-surface' : 'bg-iv-surface/60 text-iv-text hover:bg-iv-border'}`}
-                  >
-                    {MONTHS[m]}
-                  </button>
-                );
-              })}
+      {/* --- Hierarchical Navigation (Only in "New" mode) --- */}
+      {!dateRange && (
+        <div className="flex flex-wrap gap-2 items-center">
+          {structure.map(({ year, months }) => (
+            <div key={year} className="flex items-center gap-1 bg-iv-surface/40 rounded-full p-1 border border-iv-border/30">
+              <div className="px-3 py-1 text-xs font-bold text-iv-muted uppercase tracking-tighter">{year}</div>
+              <div className="flex gap-1">
+                {months.map(m => {
+                  const isActive = selectedYear === year && selectedMonth === m;
+                  return (
+                    <button
+                      key={m}
+                      onClick={() => handleMonthClick(year, m)}
+                      className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${isActive ? 'bg-iv-cyan text-iv-surface' : 'bg-iv-surface/60 text-iv-text hover:bg-iv-border'}`}
+                    >
+                      {MONTHS[m]}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
 
-      {selectedMonth !== null && (
+      {/* Actual Dashboard Content */}
+      {(dateRange || selectedMonth !== null) ? (
         <>
           {/* --- Summary Cards --- */}
           <div className="glass rounded-2xl p-6 space-y-4">
             <h3 className="text-sm font-semibold text-iv-text flex items-center gap-2">
               <Calendar size={14} className="text-iv-cyan" />
-              {MONTHS[selectedMonth]} {selectedYear} Summary
+              {dateRange 
+                ? `${format(dateRange.from, "MMM d")} - ${format(dateRange.to, "MMM d, yyyy")} Summary`
+                : `${MONTHS[selectedMonth!]} ${selectedYear} Summary`
+              }
             </h3>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="bg-iv-surface/60 rounded-xl p-4 border border-iv-border/50 space-y-1">
@@ -305,21 +322,19 @@ export function TripsDashboard({ vehicleId }: TripsDashboardProps) {
                   </div>
                 ))}
 
-                {visibleCount < currentMonthTrips.length && (
+                {!dateRange && visibleCount < displayTrips.length && (
                   <button
                     onClick={() => setVisibleCount(prev => prev + 10)}
                     className="w-full py-3 mt-2 rounded-xl border border-dashed border-iv-border hover:border-iv-cyan hover:bg-iv-cyan/5 text-xs font-medium text-iv-muted hover:text-iv-cyan transition-all flex items-center justify-center gap-2"
                   >
-                    Show More ({currentMonthTrips.length - visibleCount} remaining)
+                    Show More ({displayTrips.length - visibleCount} remaining)
                   </button>
                 )}
               </div>
             </div>
           </div>
         </>
-      )}
-
-      {selectedMonth === null && (
+      ) : (
         <div className="glass rounded-2xl p-12 text-center flex flex-col items-center gap-4">
           <Calendar className="text-iv-muted opacity-20" size={48} />
           <p className="text-sm text-iv-muted">Select a month above to view trips</p>
