@@ -398,14 +398,18 @@ export default function VehicleDetailPage() {
 
   const loadData = useCallback(async () => {
     try {
-      const [v, s, a] = await Promise.all([
+      const results = await Promise.allSettled([
         api.getVehicle(vehicleId), 
         api.getVehicleStatus(vehicleId),
         api.getAdvancedAnalyticsOverview(vehicleId)
       ]);
-      setVehicle(v);
-      setStatus(s);
-      setAdvancedAnalytics(a);
+      
+      if (results[0].status === 'fulfilled') setVehicle(results[0].value);
+      if (results[1].status === 'fulfilled') setStatus(results[1].value);
+      if (results[2].status === 'fulfilled') setAdvancedAnalytics(results[2].value);
+
+      // Essential data: if getVehicle fails, we can't show the page
+      if (results[0].status === 'rejected') router.replace("/");
     } catch { router.replace("/"); }
     finally { setLoading(false); }
   }, [vehicleId, router]);

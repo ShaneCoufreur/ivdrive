@@ -2,7 +2,7 @@ from datetime import datetime, date, timedelta
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.dependencies import get_current_user
@@ -584,29 +584,29 @@ async def get_advanced_analytics_overview(
     await get_user_vehicle(user.id, vehicle_id, db)
 
     # 1. Trip Stats
-    trip_sql = """
+    trip_sql = text("""
         SELECT short_trips_count, medium_trips_count, long_trips_count, total_trips,
                avg_eff_cold, avg_eff_warm, avg_eff_overall
         FROM v_advanced_trip_stats
         WHERE user_vehicle_id = :vid
-    """
-    trip_res = await db.execute(__import__("sqlalchemy").text(trip_sql), {"vid": str(vehicle_id)})
+    """)
+    trip_res = await db.execute(trip_sql, {"vid": str(vehicle_id)})
     trip_row = trip_res.fetchone()
 
     # 2. Phantom Drain
-    drain_sql = """
+    drain_sql = text("""
         SELECT avg_drain_pct_per_day
         FROM v_phantom_drain_stats
         WHERE user_vehicle_id = :vid
-    """
-    drain_res = await db.execute(__import__("sqlalchemy").text(drain_sql), {"vid": str(vehicle_id)})
+    """)
+    drain_res = await db.execute(drain_sql, {"vid": str(vehicle_id)})
     drain_row = drain_res.fetchone()
 
     # Build response with dynamic data and safe fallbacks
     return {
         "efficiency": {
             "avg_kwh_100km": round(float(trip_row[6]), 1) if trip_row and trip_row[6] else 18.5,
-            "cold_penalty_pct": round(((float(trip_row[4]) - float(trip_row[5])) / float(trip_row[5]) * 100) if trip_row and trip_row[4] and trip_row[5] else 15, 1),
+            "cold_penalty_pct": round(((float(trip_row[4]) - float(trip_row[5])) / float(trip_row[5]) * 100) if trip_row and trip_row[4] and trip_row[5] and float(trip_row[5]) != 0 else 15, 1),
             "cold_eff_kwh_100km": round(float(trip_row[4]), 1) if trip_row and trip_row[4] else 22.5,
             "warm_eff_kwh_100km": round(float(trip_row[5]), 1) if trip_row and trip_row[5] else 16.2,
         },
