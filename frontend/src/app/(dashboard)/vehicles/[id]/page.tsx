@@ -73,6 +73,7 @@ import { LocationsDashboard } from "@/components/statistics/LocationsDashboard";
 import { VisitedDashboard } from "@/components/statistics/VisitedDashboard";
 import { MileageKMDashboard } from "@/components/statistics/MileageKMDashboard";
 import { TripsDashboard } from "@/components/statistics/TripsDashboard";
+import { VehicleCarousel } from "@/components/vehicle/VehicleCarousel";
 
 const LocationMap = dynamic(() => import("@/components/map"), {
   ssr: false,
@@ -822,23 +823,7 @@ export default function VehicleDetailPage() {
               <h3 className="text-sm font-medium text-iv-muted mb-4 flex items-center gap-2">
                 <Car size={14} /> Exterior & Interior
               </h3>
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                {vehicle.specifications.renders.map((render: any, idx: number) => (
-                  <div key={idx} className="relative aspect-[4/3] rounded-lg overflow-hidden bg-iv-surface border border-iv-border/50 group">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={render.url}
-                      alt={render.viewType}
-                      className="absolute inset-0 w-full h-full object-cover transition-transform duration-300 group-hover:scale-110"
-                    />
-                    <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/80 to-transparent">
-                      <p className="text-[10px] uppercase font-semibold text-white truncate text-center">
-                        {render.viewType.replace(/_/g, ' ')}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
+              <VehicleCarousel renders={vehicle.specifications.renders} />
             </div>
           )}
 

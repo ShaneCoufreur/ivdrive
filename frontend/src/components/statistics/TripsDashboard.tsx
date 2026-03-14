@@ -3,7 +3,7 @@
 
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { format, parseISO, getYear, getMonth } from "date-fns";
-import { Loader2, Car, Route, Clock, TrendingUp, Map as MapIcon, Calendar } from "lucide-react";
+import { Loader2, Car, Clock, Calendar, ChevronRight } from "lucide-react";
 import { api } from "@/lib/api";
 import { MapContainer, TileLayer, Polyline, useMap } from 'react-leaflet';
 import "leaflet/dist/leaflet.css";
@@ -11,7 +11,7 @@ import "leaflet/dist/leaflet.css";
 // --- Types ---
 export interface TripsDashboardProps {
   vehicleId: string;
-  dateRange?: { from: Date; to: Date }; // Optional: if provided, behaves like the "old" stats view
+  dateRange?: { from: Date; to: Date }; // Statistics page usage
 }
 
 interface TripAnalyticsItem {
@@ -34,56 +34,31 @@ const MONTHS = [
   "July", "August", "September", "October", "November", "December"
 ];
 
-// --- Helper Hooks & Functions ---
-const useReverseGeocoding = (trips: TripAnalyticsItem[]) => {
-  const [locations, setLocations] = useState<Map<string, string>>(new Map());
-
-  const fetchLocationName = useCallback(async (lat: number, lon: number) => {
-    try {
-      const data = await api.reverseGeocode(lat, lon);
-      return data.display_name || "Location";
-    } catch (error) {
-      return "Location";
-    }
-  }, []);
-
+// --- Helper Components ---
+function MapAutoBounds({ trips }: { trips: TripAnalyticsItem[] }) {
+  const map = useMap();
   useEffect(() => {
-    const uniqueCoords = new Map<string, { lat: number; lon: number }>();
-    trips.forEach((trip) => {
-      if (trip.start_latitude === null || trip.start_longitude === null || 
-          trip.destination_latitude === null || trip.destination_longitude === null) {
-        return;
-      }
-      const startKey = `${trip.start_latitude.toFixed(5)},${trip.start_longitude.toFixed(5)}`;
-      const endKey = `${trip.destination_latitude.toFixed(5)},${trip.destination_longitude.toFixed(5)}`;
-      if (!uniqueCoords.has(startKey)) uniqueCoords.set(startKey, { lat: trip.start_latitude, lon: trip.start_longitude });
-      if (!uniqueCoords.has(endKey)) uniqueCoords.set(endKey, { lat: trip.destination_latitude, lon: trip.destination_longitude });
+    if (trips.length === 0) return;
+    const bounds: [number, number][] = [];
+    trips.forEach(t => {
+      if (t.start_latitude && t.start_longitude) bounds.push([t.start_latitude, t.start_longitude]);
+      if (t.destination_latitude && t.destination_longitude) bounds.push([t.destination_latitude, t.destination_longitude]);
     });
+    if (bounds.length > 0) map.fitBounds(bounds, { padding: [30, 30] });
+  }, [trips, map]);
+  return null;
+}
 
-    const fetchAllLocations = async () => {
-      const newLocations = new Map<string, string>(locations);
-      const entries = Array.from(uniqueCoords.entries()).filter(([key]) => !locations.has(key));
-      
-      if (entries.length === 0) return;
-
-      for (const [key, { lat, lon }] of entries) {
-        const name = await fetchLocationName(lat, lon);
-        newLocations.set(key, name);
-      }
-      setLocations(newLocations);
-    };
-
-    fetchAllLocations();
-  }, [trips, fetchLocationName]);
-
-  const getLocationName = (lat: number | null, lon: number | null) => {
-    if (lat === null || lon === null) return "Location";
-    const key = `${lat.toFixed(5)},${lon.toFixed(5)}`;
-    return locations.get(key) || "Location";
-  };
-
-  return { getLocationName };
-};
+function MapController({ activeTripId, trips }: { activeTripId: number | null, trips: TripAnalyticsItem[] }) {
+    const map = useMap();
+    useEffect(() => {
+        const activeTrip = trips.find(t => t.trip_id === activeTripId);
+        if (activeTrip && activeTrip.start_latitude && activeTrip.start_longitude) {
+            map.flyTo([activeTrip.start_latitude, activeTrip.start_longitude], 13);
+        }
+    }, [activeTripId, trips, map]);
+    return null;
+}
 
 function formatDuration(minutes: number): string {
   if (minutes <= 0) return "—";
@@ -93,56 +68,45 @@ function formatDuration(minutes: number): string {
   return `${m}m`;
 }
 
-function MapController({ activeTripId, trips }: { activeTripId: number | null, trips: TripAnalyticsItem[] }) {
-    const map = useMap();
-    useEffect(() => {
-        const activeTrip = trips.find(t => t.trip_id === activeTripId);
-        if (activeTrip) {
-            map.flyTo([activeTrip.start_latitude, activeTrip.start_longitude], 13);
-        } else if (trips.length > 0) {
-            const bounds = trips.reduce((acc, trip) => {
-                if (trip.start_latitude && trip.start_longitude && trip.destination_latitude && trip.destination_longitude) {
-                  acc.extend([trip.start_latitude, trip.start_longitude]).extend([trip.destination_latitude, trip.destination_longitude]);
-                }
-                return acc;
-            }, new (window as any).L.LatLngBounds());
-            if (bounds.isValid()) {
-                map.fitBounds(bounds, { padding: [50, 50] });
-            }
-        }
-    }, [activeTripId, trips, map]);
-    return null;
-}
-
-
 // --- Main Component ---
 export function TripsDashboard({ vehicleId, dateRange }: TripsDashboardProps) {
   const [allTrips, setAllTrips] = useState<TripAnalyticsItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTripId, setActiveTripId] = useState<number | null>(null);
+  const [locations, setLocations] = useState<Map<string, string>>(new Map());
   
-  // Year/Month selection (only used when dateRange is NOT provided)
-  const [selectedYear, setSelectedYear] = useState<number>(getYear(new Date()));
+  // Year/Month selection
+  const [selectedYear, setSelectedYear] = useState<number | null>(null);
   const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
   const [visibleCount, setVisibleCount] = useState(10);
 
-  const { getLocationName } = useReverseGeocoding(allTrips);
+  // Geocoding helper
+  const fetchLocationName = useCallback(async (lat: number, lon: number) => {
+    try {
+      const data = await api.reverseGeocode(lat, lon);
+      return data.display_name || "Location";
+    } catch {
+      return "Location";
+    }
+  }, []);
+
+  const getLocationName = (lat: number | null | undefined, lon: number | null | undefined) => {
+    if (lat == null || lon == null) return "Location";
+    const key = `${lat.toFixed(5)},${lon.toFixed(5)}`;
+    return locations.get(key) || "Location";
+  };
 
   // Initial load
   useEffect(() => {
-    const fetchInitialData = async () => {
+    const fetchData = async () => {
       setLoading(true);
       try {
         const fromStr = dateRange?.from?.toISOString();
         const toStr = dateRange?.to?.toISOString();
-        
-        // If dateRange is provided, we only fetch that slice (behaving like the "old" view)
-        // If dateRange is NOT provided, we fetch a large batch for the "new" hierarchical view
         const limit = dateRange ? 200 : 2000;
         const list = await api.getTripsAnalytics(vehicleId, limit, fromStr, toStr);
         setAllTrips(list ?? []);
         
-        // Auto-select latest year/month only for hierarchical mode
         if (!dateRange && list && list.length > 0) {
           const latest = list[0];
           const d = parseISO(latest.start_time);
@@ -155,12 +119,11 @@ export function TripsDashboard({ vehicleId, dateRange }: TripsDashboardProps) {
         setLoading(false);
       }
     };
-    fetchInitialData();
+    fetchData();
   }, [vehicleId, dateRange?.from, dateRange?.to]);
 
-  // Hierarchical Structure (only for navigation mode)
+  // Hierarchical Structure
   const structure = useMemo(() => {
-    if (dateRange) return [];
     const years: Record<number, Set<number>> = {};
     allTrips.forEach(t => {
       const d = parseISO(t.start_time);
@@ -175,12 +138,12 @@ export function TripsDashboard({ vehicleId, dateRange }: TripsDashboardProps) {
         months: Array.from(months).sort((a, b) => b - a)
       }))
       .sort((a, b) => b.year - a.year);
-  }, [allTrips, dateRange]);
+  }, [allTrips]);
 
-  // Filtered trips for the active view
+  // Filtered trips
   const displayTrips = useMemo(() => {
-    if (dateRange) return allTrips; // "Old" mode: show everything in the dateRange
-    if (selectedMonth === null) return [];
+    if (dateRange) return allTrips;
+    if (selectedMonth === null || selectedYear === null) return [];
     return allTrips.filter(t => {
       const d = parseISO(t.start_time);
       return getYear(d) === selectedYear && getMonth(d) === selectedMonth;
@@ -188,22 +151,42 @@ export function TripsDashboard({ vehicleId, dateRange }: TripsDashboardProps) {
   }, [allTrips, selectedYear, selectedMonth, dateRange]);
 
   const visibleTrips = useMemo(() => {
-    if (dateRange) return displayTrips; // "Old" mode: no lazy loading
+    if (dateRange) return displayTrips;
     return displayTrips.slice(0, visibleCount);
   }, [displayTrips, visibleCount, dateRange]);
 
   const summary = useMemo(() => ({
     totalTrips: displayTrips.length,
-    totalDistance: displayTrips.reduce((acc, trip) => acc + trip.distance_km, 0),
-    totalTime: displayTrips.reduce((acc, trip) => acc + trip.duration_minutes, 0),
+    totalDistance: displayTrips.reduce((acc, trip) => acc + (trip.distance_km || 0), 0),
+    totalTime: displayTrips.reduce((acc, trip) => acc + (trip.duration_minutes || 0), 0),
     avgEfficiency: displayTrips.filter(t => t.efficiency_kwh_100km).reduce((acc, trip, _, arr) => acc + (trip.efficiency_kwh_100km || 0) / arr.length, 0)
   }), [displayTrips]);
 
-  const handleMonthClick = (year: number, month: number) => {
-    setSelectedYear(year);
-    setSelectedMonth(month === selectedMonth && year === selectedYear ? null : month);
-    setVisibleCount(10);
-  };
+  // Lazy geocoding
+  useEffect(() => {
+    const newLocations = new Map(locations);
+    let changed = false;
+
+    const resolve = async () => {
+      for (const trip of visibleTrips) {
+        const coords = [
+          { lat: trip.start_latitude, lon: trip.start_longitude },
+          { lat: trip.destination_latitude, lon: trip.destination_longitude }
+        ];
+        for (const { lat, lon } of coords) {
+          if (lat == null || lon == null) continue;
+          const key = `${lat.toFixed(5)},${lon.toFixed(5)}`;
+          if (!newLocations.has(key)) {
+            const name = await fetchLocationName(lat, lon);
+            newLocations.set(key, name);
+            changed = true;
+          }
+        }
+      }
+      if (changed) setLocations(newLocations);
+    };
+    resolve();
+  }, [visibleTrips, fetchLocationName]);
 
   if (loading) {
     return <div className="flex items-center justify-center py-24"><Loader2 className="h-8 w-8 animate-spin text-iv-muted" /></div>;
@@ -215,129 +198,145 @@ export function TripsDashboard({ vehicleId, dateRange }: TripsDashboardProps) {
 
   return (
     <div className="space-y-6">
-      {/* --- Hierarchical Navigation (Only in "New" mode) --- */}
-      {!dateRange && (
-        <div className="flex flex-wrap gap-2 items-center">
-          {structure.map(({ year, months }) => (
-            <div key={year} className="flex items-center gap-1 bg-iv-surface/40 rounded-full p-1 border border-iv-border/30">
-              <div className="px-3 py-1 text-xs font-bold text-iv-muted uppercase tracking-tighter">{year}</div>
-              <div className="flex gap-1">
-                {months.map(m => {
-                  const isActive = selectedYear === year && selectedMonth === m;
-                  return (
-                    <button
-                      key={m}
-                      onClick={() => handleMonthClick(year, m)}
-                      className={`px-3 py-1 rounded-full text-xs font-medium transition-all ${isActive ? 'bg-iv-cyan text-iv-surface' : 'bg-iv-surface/60 text-iv-text hover:bg-iv-border'}`}
-                    >
-                      {MONTHS[m]}
-                    </button>
-                  );
-                })}
-              </div>
+      {/* --- STATISTICS MODE: SHOW SUMMARY CARDS --- */}
+      {dateRange && (
+        <div className="glass rounded-2xl p-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-iv-text">Trip Summary</h3>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div className="bg-iv-surface/60 rounded-xl p-4 border border-iv-border/50">
+              <p className="text-[10px] font-bold text-iv-muted uppercase mb-1">Total Trips</p>
+              <p className="text-2xl font-bold text-iv-text">{summary.totalTrips}</p>
             </div>
-          ))}
+            <div className="bg-iv-surface/60 rounded-xl p-4 border border-iv-border/50">
+              <p className="text-[10px] font-bold text-iv-muted uppercase mb-1">Total Distance</p>
+              <p className="text-2xl font-bold text-iv-text">{summary.totalDistance.toFixed(1)} km</p>
+            </div>
+            <div className="bg-iv-surface/60 rounded-xl p-4 border border-iv-border/50">
+              <p className="text-[10px] font-bold text-iv-muted uppercase mb-1">Total Time</p>
+              <p className="text-2xl font-bold text-iv-text">{formatDuration(summary.totalTime)}</p>
+            </div>
+            <div className="bg-iv-surface/60 rounded-xl p-4 border border-iv-cyan/30">
+              <p className="text-[10px] font-bold text-iv-cyan uppercase mb-1 tracking-wider">Avg. Efficiency</p>
+              <p className="text-2xl font-bold text-iv-cyan">{summary.avgEfficiency > 0 ? summary.avgEfficiency.toFixed(2) : '—'}</p>
+              {summary.avgEfficiency > 0 && <p className="text-[10px] text-iv-muted mt-1">kWh/100km</p>}
+            </div>
+          </div>
         </div>
       )}
 
-      {/* Actual Dashboard Content */}
-      {(dateRange || selectedMonth !== null) ? (
-        <>
-          {/* --- Summary Cards --- */}
-          <div className="glass rounded-2xl p-6 space-y-4">
-            <h3 className="text-sm font-semibold text-iv-text flex items-center gap-2">
-              <Calendar size={14} className="text-iv-cyan" />
-              {dateRange 
-                ? `${format(dateRange.from, "MMM d")} - ${format(dateRange.to, "MMM d, yyyy")} Summary`
-                : `${MONTHS[selectedMonth!]} ${selectedYear} Summary`
-              }
-            </h3>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <div className="bg-iv-surface/60 rounded-xl p-4 border border-iv-border/50 space-y-1">
-                <span className="text-[10px] font-bold text-iv-muted uppercase">Trips</span>
-                <p className="text-xl font-bold text-iv-text">{summary.totalTrips}</p>
-              </div>
-              <div className="bg-iv-surface/60 rounded-xl p-4 border border-iv-border/50 space-y-1">
-                <span className="text-[10px] font-bold text-iv-muted uppercase">Distance</span>
-                <p className="text-xl font-bold text-iv-text">{summary.totalDistance.toFixed(1)} km</p>
-              </div>
-              <div className="bg-iv-surface/60 rounded-xl p-4 border border-iv-border/50 space-y-1">
-                <span className="text-[10px] font-bold text-iv-muted uppercase">Duration</span>
-                <p className="text-xl font-bold text-iv-text">{formatDuration(summary.totalTime)}</p>
-              </div>
-              <div className="bg-iv-surface/60 rounded-xl p-4 border border-iv-cyan/30 space-y-1">
-                <span className="text-[10px] font-bold text-iv-cyan uppercase tracking-wider">Avg. Eff</span>
-                <p className="text-xl font-bold text-iv-cyan">{summary.avgEfficiency > 0 ? summary.avgEfficiency.toFixed(1) : '—'}</p>
-              </div>
-            </div>
+      {/* --- YEAR & MONTH NAVIGATION (Overview Mode) --- */}
+      {!dateRange && (
+        <div className="space-y-4">
+          <div className="flex flex-wrap gap-2">
+            {structure.map(({ year }) => (
+              <button
+                key={year}
+                onClick={() => { setSelectedYear(year); setVisibleCount(10); }}
+                className={`px-4 py-2 rounded-xl text-sm font-bold transition-all border ${selectedYear === year ? 'bg-iv-cyan text-iv-surface border-iv-cyan' : 'bg-iv-surface/40 text-iv-text border-iv-border/50 hover:border-iv-cyan/50'}`}
+              >
+                {year}
+              </button>
+            ))}
           </div>
+          
+          {selectedYear && (
+            <div className="flex flex-wrap gap-2 animate-in fade-in slide-in-from-top-1">
+              {structure.find(s => s.year === selectedYear)?.months.map(m => (
+                <button
+                  key={m}
+                  onClick={() => { setSelectedMonth(m); setVisibleCount(10); }}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${selectedMonth === m ? 'bg-iv-cyan/20 text-iv-cyan border border-iv-cyan/30' : 'bg-iv-surface/20 text-iv-muted border border-iv-border/30 hover:text-iv-text'}`}
+                >
+                  {MONTHS[m]}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
-          {/* --- Main Content --- */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-2 glass rounded-2xl overflow-hidden h-96 lg:h-[35rem]">
-              <MapContainer center={[54.6872, 25.2797]} zoom={6} className="h-full w-full" scrollWheelZoom={true}>
-                <TileLayer
-                  attribution='&copy; <a href="https://carto.com/attributions">CARTO</a>'
-                  url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-                />
-                {visibleTrips.filter(t => t.start_latitude && t.destination_latitude).map(trip => {
-                  const isActive = trip.trip_id === activeTripId;
-                  return (
+      {/* --- MAIN DASHBOARD: MAP + LIST (Only if month selected or in stats mode) --- */}
+      {(dateRange || selectedMonth !== null) ? (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2 glass rounded-2xl overflow-hidden h-[400px] lg:h-[500px] border border-iv-border/50">
+            <MapContainer 
+              center={[54.6872, 25.2797]} 
+              zoom={13} 
+              className="h-full w-full"
+              scrollWheelZoom={true}
+            >
+              <TileLayer
+                attribution='&copy; <a href="https://carto.com/attributions">CARTO</a>'
+                url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+              />
+              {displayTrips.map(trip => {
+                const isActive = trip.trip_id === activeTripId;
+                return (
                     <Polyline
                       key={trip.trip_id}
-                      positions={[[trip.start_latitude!, trip.start_longitude!], [trip.destination_latitude!, trip.destination_longitude!]]}
+                      positions={[
+                        [trip.start_latitude, trip.start_longitude],
+                        [trip.destination_latitude, trip.destination_longitude]
+                      ]}
                       pathOptions={{
-                        color: isActive ? "#00D4FF" : "#475569",
+                        color: isActive ? "#00f3ff" : "#475569",
                         weight: isActive ? 4 : 2,
                         opacity: isActive ? 1.0 : 0.6
                       }}
+                      onClick={() => setActiveTripId(trip.trip_id)}
                     />
-                  )
-                })}
-                <MapController activeTripId={activeTripId} trips={visibleTrips} />
-              </MapContainer>
-            </div>
-            
-            <div className="glass rounded-2xl p-6 flex flex-col h-[35rem]">
-              <h3 className="text-sm font-semibold text-iv-text mb-4">Trips</h3>
-              <div className="flex-1 space-y-2 overflow-y-auto no-scrollbar pr-1">
-                {visibleTrips.map((trip) => (
-                  <div
-                    key={trip.trip_id}
-                    className={`flex items-center gap-3 p-3 rounded-xl bg-iv-surface/60 border transition-colors cursor-pointer ${activeTripId === trip.trip_id ? 'border-iv-cyan/50' : 'border-iv-border/50 hover:border-iv-border'}`}
-                    onClick={() => setActiveTripId(trip.trip_id)}
-                  >
-                    <div className="p-2 rounded-full shrink-0 bg-iv-cyan/10">
-                      <Car size={14} className="text-iv-cyan" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-iv-text truncate">
-                        {getLocationName(trip.start_latitude, trip.start_longitude)} <span className="text-iv-muted">→</span> {getLocationName(trip.destination_latitude, trip.destination_longitude)}
-                      </p>
-                      <p className="text-[10px] text-iv-muted">{format(parseISO(trip.start_time), "MMM d, HH:mm")}</p>
-                    </div>
-                    <div className="text-right shrink-0">
-                        <p className="text-xs font-bold text-iv-text">{trip.distance_km.toFixed(1)} km</p>
-                    </div>
-                  </div>
-                ))}
+                )
+              })}
+              <MapAutoBounds trips={displayTrips} />
+              <MapController activeTripId={activeTripId} trips={displayTrips} />
+            </MapContainer>
+          </div>
 
-                {!dateRange && visibleCount < displayTrips.length && (
-                  <button
-                    onClick={() => setVisibleCount(prev => prev + 10)}
-                    className="w-full py-3 mt-2 rounded-xl border border-dashed border-iv-border hover:border-iv-cyan hover:bg-iv-cyan/5 text-xs font-medium text-iv-muted hover:text-iv-cyan transition-all flex items-center justify-center gap-2"
-                  >
-                    Show More ({displayTrips.length - visibleCount} remaining)
-                  </button>
-                )}
-              </div>
+          <div className="glass rounded-2xl p-4 flex flex-col h-[400px] lg:h-[500px]">
+            <h3 className="text-sm font-semibold text-iv-text mb-4">Trips</h3>
+            <div className="flex-1 space-y-2 overflow-y-auto no-scrollbar pr-1">
+              {visibleTrips.map((trip) => {
+                const isActive = trip.trip_id === activeTripId;
+                return (
+                    <div
+                      key={trip.trip_id}
+                      className={`flex items-center gap-3 p-3 rounded-xl bg-iv-surface/60 border transition-all cursor-pointer ${isActive ? 'border-iv-cyan/50 bg-iv-cyan/5' : 'border-iv-border/40 hover:border-iv-border'}`}
+                      onClick={() => setActiveTripId(trip.trip_id)}
+                    >
+                      <div className="p-2 rounded-full shrink-0 bg-iv-cyan/10">
+                        <Car size={14} className={`text-iv-cyan ${isActive ? 'animate-pulse' : ''}`} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-iv-text truncate">
+                          {getLocationName(trip.start_latitude, trip.start_longitude)} <span className="text-iv-muted">→</span> {getLocationName(trip.destination_latitude, trip.destination_longitude)}
+                        </p>
+                        <p className="text-[10px] text-iv-muted">{format(parseISO(trip.start_time), "MMM d, HH:mm")}</p>
+                      </div>
+                      <div className="text-right shrink-0">
+                          <p className="text-xs font-bold text-iv-text">{trip.distance_km?.toFixed(1) ?? "0.0"} km</p>
+                          <p className="text-[9px] text-iv-cyan font-medium">{trip.efficiency_kwh_100km?.toFixed(1) ?? "—"} kWh/100</p>
+                      </div>
+                    </div>
+                )
+              })}
+
+              {!dateRange && selectedMonth !== null && visibleCount < displayTrips.length && (
+                <button
+                  onClick={() => setVisibleCount(prev => prev + 10)}
+                  className="w-full py-3 mt-2 rounded-xl border border-dashed border-iv-border hover:border-iv-cyan hover:bg-iv-cyan/5 text-xs font-medium text-iv-muted hover:text-iv-cyan transition-all flex items-center justify-center gap-2"
+                >
+                  Show More ({displayTrips.length - visibleCount} remaining)
+                </button>
+              )}
             </div>
           </div>
-        </>
+        </div>
       ) : (
-        <div className="glass rounded-2xl p-12 text-center flex flex-col items-center gap-4">
-          <Calendar className="text-iv-muted opacity-20" size={48} />
-          <p className="text-sm text-iv-muted">Select a month above to view trips</p>
+        <div className="glass rounded-3xl p-20 text-center flex flex-col items-center gap-4 border-dashed">
+          <Calendar className="text-iv-muted opacity-10" size={64} />
+          <p className="text-sm text-iv-muted font-medium">Select a month above to view your trip history</p>
         </div>
       )}
     </div>
