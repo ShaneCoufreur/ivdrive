@@ -25,35 +25,53 @@ export function VehicleCarousel({ renders }: VehicleCarouselProps) {
   }, [renders]);
 
   const originalLength = renders.length;
+  const extendedLength = extendedRenders.length;
   const [internalIndex, setInternalIndex] = useState(originalLength * 2);
 
   useEffect(() => {
     if (!isAutoPlaying) return;
     const timer = setInterval(() => {
-      setInternalIndex((prev) => prev + 1);
+      setInternalIndex((prev) => {
+        const next = prev + 1;
+        return next >= extendedLength ? originalLength * 2 : next;
+      });
     }, 8000);
     return () => clearInterval(timer);
-  }, [isAutoPlaying]);
+  }, [isAutoPlaying, extendedLength, originalLength]);
+
+  const safeIndex = extendedLength > 0 ? Math.min(internalIndex, extendedLength - 1) : 0;
 
   useEffect(() => {
-    if (scrollRef.current) {
+    if (extendedLength > 0 && internalIndex >= extendedLength) {
+      setInternalIndex(originalLength * 2);
+    }
+  }, [extendedLength, originalLength, internalIndex]);
+
+  useEffect(() => {
+    if (scrollRef.current && extendedLength > 0) {
       const container = scrollRef.current;
-      const activeThumb = container.children[internalIndex] as HTMLElement;
+      const activeThumb = container.children[safeIndex] as HTMLElement;
       if (activeThumb) {
         const scrollLeft = activeThumb.offsetLeft - (container.offsetWidth / 2) + (activeThumb.offsetWidth / 2);
         container.scrollTo({ left: scrollLeft, behavior: 'smooth' });
       }
     }
-    setActiveIndex(internalIndex % originalLength);
-  }, [internalIndex, originalLength]);
+    setActiveIndex(safeIndex % originalLength);
+  }, [safeIndex, originalLength, extendedLength]);
 
   const handleManualAction = (targetInternalIndex: number) => {
     setIsAutoPlaying(false);
     setInternalIndex(targetInternalIndex);
   };
 
-  const handleNext = () => setInternalIndex((prev) => prev + 1);
-  const handlePrev = () => setInternalIndex((prev) => prev - 1);
+  const handleNext = () => setInternalIndex((prev) => {
+    const next = prev + 1;
+    return next >= extendedLength ? originalLength * 2 : next;
+  });
+  const handlePrev = () => setInternalIndex((prev) => {
+    const prevIdx = prev - 1;
+    return prevIdx < 0 ? extendedLength - 1 : prevIdx;
+  });
 
   if (!renders || renders.length === 0) return null;
 
@@ -113,8 +131,8 @@ export function VehicleCarousel({ renders }: VehicleCarouselProps) {
           className="flex items-center gap-0 overflow-x-auto no-scrollbar h-full px-[50%]"
         >
           {extendedRenders.map((render, idx) => {
-            const distance = Math.abs(idx - internalIndex);
-            const isActive = idx === internalIndex;
+            const distance = Math.abs(idx - safeIndex);
+            const isActive = idx === safeIndex;
             
             let widthClass = "w-20 md:w-28";
             let scale = 0.6;
@@ -145,6 +163,7 @@ export function VehicleCarousel({ renders }: VehicleCarouselProps) {
               >
                 <button
                   onClick={() => handleManualAction(idx)}
+                  type="button"
                   style={{ 
                       transform: `scale(${scale})`,
                       opacity: opacity,
