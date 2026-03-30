@@ -6,6 +6,14 @@ const API_BASE =
     ? process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, "")
     : "";
 
+function getCsrfToken(): string | null {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie.match(/(^|;)\s*XSRF-TOKEN=([^;]+)/);
+  if (match) return decodeURIComponent(match[2]);
+  const csrfMatch = document.cookie.match(/(^|;)\s*csrf_token=([^;]+)/);
+  return csrfMatch ? decodeURIComponent(csrfMatch[2]) : null;
+}
+
 interface TokenPair {
   access_token: string;
   refresh_token: string;
@@ -13,44 +21,42 @@ interface TokenPair {
 }
 
 function getTokens(): TokenPair | null {
-  if (typeof window === "undefined") return null;
-  const raw = localStorage.getItem("ivdrive_tokens");
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
+  return null; // Deprecated: Tokens are stored in HTTP-only cookies
 }
 
 function setTokens(tokens: TokenPair) {
-  localStorage.setItem("ivdrive_tokens", JSON.stringify(tokens));
+  // Deprecated: Tokens are set via HTTP-only cookies by the backend
 }
 
 function clearTokens() {
-  localStorage.removeItem("ivdrive_tokens");
+  if (typeof document !== "undefined") {
+    document.cookie = "XSRF-TOKEN=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+    document.cookie = "csrf_token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+  }
 }
 
-async function refreshAccessToken(): Promise<string | null> {
-  const tokens = getTokens();
-  if (!tokens?.refresh_token) return null;
-
+async function refreshAccessToken(): Promise<boolean> {
   try {
+    const csrfToken = getCsrfToken();
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (csrfToken) {
+      headers["X-CSRF-Token"] = csrfToken;
+      headers["X-XSRF-TOKEN"] = csrfToken;
+    }
+
     const res = await fetch(`${API_BASE}/api/v1/auth/refresh`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refresh_token: tokens.refresh_token }),
+      headers,
+      credentials: "include"
     });
     if (!res.ok) {
       clearTokens();
-      return null;
+      return false;
     }
-    const newTokens: TokenPair = await res.json();
-    setTokens(newTokens);
-    return newTokens.access_token;
+    return true;
   } catch {
     clearTokens();
-    return null;
+    return false;
   }
 }
 
@@ -58,23 +64,29 @@ async function apiFetch(
   path: string,
   options: RequestInit = {}
 ): Promise<Response> {
-  const tokens = getTokens();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(options.headers as Record<string, string>),
   };
 
-  if (tokens?.access_token) {
-    headers["Authorization"] = `Bearer ${tokens.access_token}`;
+  const csrfToken = getCsrfToken();
+  if (csrfToken) {
+    headers["X-CSRF-Token"] = csrfToken;
+    headers["X-XSRF-TOKEN"] = csrfToken;
   }
 
-  let res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  const fetchOptions: RequestInit = {
+    ...options,
+    headers,
+    credentials: "include",
+  };
 
-  if (res.status === 401 && tokens?.refresh_token) {
-    const newToken = await refreshAccessToken();
-    if (newToken) {
-      headers["Authorization"] = `Bearer ${newToken}`;
-      res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  let res = await fetch(`${API_BASE}${path}`, fetchOptions);
+
+  if (res.status === 401 && path !== "/api/v1/auth/refresh") {
+    const refreshed = await refreshAccessToken();
+    if (refreshed) {
+      res = await fetch(`${API_BASE}${path}`, fetchOptions);
     }
   }
 
@@ -97,7 +109,7 @@ export const api = {
   async login(email: string, password: string): Promise<any> {
     if (!isValidEmail(email)) throw new Error("Invalid email format");
     if (!isValidPassword(password)) throw new Error("Password must be at least 6 characters");
-    const res = await fetch(`${API_BASE}/api/v1/auth/login`, {
+    const res = await apiFetch(`/api/v1/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password }),
@@ -111,7 +123,7 @@ export const api = {
   },
 
   async verify2FA(token2FA: string, code: string) {
-    const res = await fetch(`${API_BASE}/api/v1/auth/login/verify-2fa`, {
+    const res = await apiFetch(`/api/v1/auth/login/verify-2fa`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ "2fa_token": token2FA, code }),
@@ -123,7 +135,7 @@ export const api = {
   },
 
   async verifyRecoveryCode(token2FA: string, recoveryCode: string) {
-    const res = await fetch(`${API_BASE}/api/v1/auth/login/verify-recovery-code`, {
+    const res = await apiFetch(`/api/v1/auth/login/verify-recovery-code`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ "2fa_token": token2FA, recovery_code: recoveryCode }),
@@ -161,7 +173,7 @@ export const api = {
   async register(email: string, password: string, displayName?: string, inviteToken?: string): Promise<any> {
     if (!isValidEmail(email)) throw new Error("Invalid email format");
     if (!isValidPassword(password)) throw new Error("Password must be at least 6 characters");
-    const res = await fetch(`${API_BASE}/api/v1/auth/register`, {
+    const res = await apiFetch(`/api/v1/auth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -177,13 +189,13 @@ export const api = {
   },
 
   async getRegistrationMode(): Promise<{ mode: string }> {
-    const res = await fetch(`${API_BASE}/api/v1/auth/registration-mode`);
+    const res = await apiFetch(`/api/v1/auth/registration-mode`);
     if (!res.ok) return { mode: "open" };
     return res.json();
   },
 
   async requestInvite(email: string) {
-    const res = await fetch(`${API_BASE}/api/v1/auth/invite-request`, {
+    const res = await apiFetch(`/api/v1/auth/invite-request`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email }),
@@ -195,7 +207,7 @@ export const api = {
 
   async forgotPassword(email: string): Promise<any> {
     if (!isValidEmail(email)) throw new Error("Invalid email format");
-    const res = await fetch(`${API_BASE}/api/v1/auth/forgot-password`, {
+    const res = await apiFetch(`/api/v1/auth/forgot-password`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email }),
@@ -207,7 +219,7 @@ export const api = {
 
   async resetPassword(token: string, newPassword: string): Promise<any> {
     if (!isValidPassword(newPassword)) throw new Error("Password must be at least 6 characters");
-    const res = await fetch(`${API_BASE}/api/v1/auth/reset-password`, {
+    const res = await apiFetch(`/api/v1/auth/reset-password`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token, new_password: newPassword }),
