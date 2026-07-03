@@ -1,5 +1,8 @@
 # Changelog
 
+## [Unreleased]
+### Maintenance
+- **Repo hygiene — `.gitignore` / `.dockerignore` cleanup**: rewrote all four ignore files (`.gitignore`, root `.dockerignore`, `backend/.dockerignore`, `frontend/.dockerignore`) to cover common noise (Python `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `.coverage`, `htmlcov`, `*.egg-info`, venvs, `.env*`, logs; Node `node_modules`, `.next`, `dist`, `build`, `out`, `.eslintcache`, `tsconfig.tsbuildinfo`; editor/IDE scratch `*.orig`, `*.bak`, `*.tmp`, `*.swp`, `.DS_Store`, `Thumbs.db`, `.idea/`, `.vscode/`). Removed the accidentally-tracked editor backup `frontend/src/app/(dashboard)/admin/page.tsx.orig`. Smaller Docker build context, no secrets or local DB dumps can leak into the repo.
 ## [v1.1.1] - 2026-06-20
 Maintenance & reliability release: fixes the charging-receipt edit lag (stale server cache), surfaces Škoda connection/auth failures in the UI so users know when to reconnect, makes the vehicle "sync off" state honest, and adds mobile-responsive fixes. Includes a statistics-correctness verification pass and a build-breaking syntax fix.
 
@@ -54,6 +57,26 @@ compose template.
   3. Both the initial router call AND the SQL-healing re-prompt loop now pass `conversation_history` so context survives across the 3-attempt retry.
 - **chat_tools.py (missing table)**: `log_missing_capability` referenced `ai_missed_intents` table that was never created — caused `Internal Server Error` whenever the router fell back to "I don't have that capability". Added migration `8b3c4d5e6f70_add_ai_missed_intents.py` to create the table + index; applied to production DB.
 - chat.py (agentic router): tighten prompt to forbid `log_missing_capability` for short follow-ups ("how much did that cost?") when prior turn established a vehicle — prefer tools 5/6/7 with the resolved vehicle name.
+
+## [Unreleased] - 2026-06-26
+### Changed
+- **Frontend react-doctor cleanup — Passes 1, 2, 3, 5, 6A, 6B** (branch `fix/react-doctor-cleanup-passes-1-2-3-5`)
+  - Issues: 264 → 92 (−172), errors: 1 → 0, files: 48 → 28, score: 45 → 48
+  - **Pass 1**: deleted 11 dead files, swept 38 `type="button"` omissions on buttons, fixed MovementDashboard flicker (date-range dependency tracking), upgraded `next@16.2.6`
+  - **Pass 2**: fixed `new Date()` hydration (IVDriveAIWidget + DashboardLayout), cleaned unused imports
+  - **Pass 3**: audit + cleanup of mounted gates (consistent pattern)
+  - **Pass 5**: `toSorted` over `sort()`, dropped unused exports
+  - **Pass 6A**: accessibility sweep — 5 click handlers on divs got `role="button" + tabIndex={0} + onKeyDown(Enter/Space)` (AddVehicleModal + 2nd modal backdrops, DeleteVehicleModal backdrop, Trip row selector, VehicleCard outer click); 4 labels paired with `htmlFor`/`id` (admin announcements form)
+  - **Pass 6B**: hoisted `new Date()` out of statistics + maintenance IIFEs into a single `statsNow` state in `VehicleDetailPage`, threaded through both chart IIFEs (eliminates per-render clock reads)
+- **PR Agent feedback fixes (1 High, 4 Medium, 3 Low)** — all on the same branch, will consolidate into PR #153 (see PR-153 conversation):
+  - **High**: `battery_passport.py` `_svg_chart` — `points = []` then injected into f-string rendered as Python `repr()` (broken SVG `<circle>` list). Fixed: joined via generator expression.
+  - **Medium**: `battery_scheduler.py` — manual f-string JSON for `metadata_json` with `bool(...)` → `True`/`False` (invalid JSONB). Fixed: `json.dumps({...})`.
+  - **Medium**: `analytics.py` SoH derivation — `if not factory_kwh or factory_kwh <= 0` ran AFTER `db.execute(soh_stmt, ...)` (which divides by `:factory_kwh`). Fixed: moved guard before query.
+  - **Medium**: `battery_passport.py` `send_passport_email` + `send_passport_email_legacy` — synchronous `smtplib.SMTP` inside `async def` blocks the FastAPI event loop under scheduler load. Fixed: wrap in `_send_sync()` closure + `await asyncio.to_thread(...)`.
+  - **Medium**: `vehicles/[id]/page.tsx` `maintenanceDateRange` — initialised with `new Date()` causing hydration mismatch (same pattern as `statsNow` from Pass 6B but missed on the maintenance tab). Fixed: `useState<... | null>(null)` + populate in `useEffect`.
+  - **Low**: `battery_passport.py` — `badge_y = y_for(current_soh) - 28` can be negative for healthy batteries (clipping badge). Fixed: `max(0, ...)`.
+  - **Low**: `vehicles/[id]/page.tsx` tab-switching `useEffect` — no cleanup, in-flight requests could `setState` on stale instance (race conditions). Fixed: `let isMounted = true` + guard every setter + return cleanup.
+  - **Low**: `vehicles/[id]/page.tsx` `handleDelete` — swallowed errors and closed the modal on failure (no user feedback). Fixed: keep modal open, route error through existing `setCmdResult` toast.
 
 ## [Unreleased] - 2026-05-08
 ### Fixed

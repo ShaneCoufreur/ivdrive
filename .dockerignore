@@ -1,12 +1,142 @@
-issues.md
+# =========================================================================
+# iVDrive .dockerignore
+# =========================================================================
+# Goals:
+#   - Keep Docker build context small and fast.
+#   - Never copy secrets, local DB dumps, node_modules, or build outputs.
+#   - Never copy editor/IDE metadata, OS junk, or local-only docs.
+# =========================================================================
+
+# ---- VCS metadata --------------------------------------------------------
+.git/
+.gitignore
+.dockerignore
+.github/
+
+# ---- Secrets / env -------------------------------------------------------
 .env
-.DS_Store
-_build_images.sh
-_cleanup.sh
-_load_amd64_images_on_nas.sh
-_scan_secrets.sh
-transfer-images-to-nas.sh
-transfer-project-and-build-on-nas.sh
+.env.*
+!.env.example
+!backend/.env.example
+*.pem
+*.key
+
+# ---- Local-only docs / scratch (never needed in a build) ----------------
 _local_docs/
 _deprecated_scripts/
-.claude
+.claudemem
+.claude/
+CLAUDE.md
+run_tests.py
+issues.md
+release-notes.md
+
+# ---- Python caches / venvs / test artifacts -----------------------------
+**/__pycache__/
+__pycache__/
+*.pyc
+*.pyo
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+.eggs/
+.pyre/
+.pyright_cache/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.venv/
+venv/
+env/
+backend/.venv/
+
+# ---- Frontend (Node / Next) build artifacts -----------------------------
+node_modules/
+**/node_modules/
+.next/
+**/.next/
+out/
+build/
+dist/
+.turbo/
+.parcel-cache/
+.eslintcache
+frontend/tsconfig.tsbuildinfo
+*.tsbuildinfo
+
+# ---- Tests ---------------------------------------------------------------
+tests/
+**/tests/
+**/__tests__/
+**/*.test.ts
+**/*.test.tsx
+**/*.spec.ts
+**/*.spec.tsx
+coverage/
+test-results/
+playwright-report/
+
+# ---- Data dumps / runtime output ----------------------------------------
+data/
+backend/data/
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.sql.gz
+*.csv.gz
+*.parquet
+shared_data/
+**/shared_data/
+
+# ---- Logs / runtime -----------------------------------------------------
+*.log
+logs/
+**/logs/
+*.pid
+
+# ---- Editor / OS noise --------------------------------------------------
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+*.swp
+*.bak
+*.tmp
+*.orig
+*.rej
+*~
+.Trash-*
+.fseventsd/
+
+# ---- CI / scripts that don't belong in build context --------------------
+.scan_secrets.sh
+_cleanup.sh
+_build_images.sh
+_load_amd64_images_on_nas.sh
+transfer-*.sh
+_transfer*
+
+# ---- Dockerfiles at non-build paths -------------------------------------
+# (root Dockerfile IS used; backend/frontend ones stay)
+# Nothing to exclude here.
+
+# ---- Keep these explicitly (overrides above) ----------------------------
+!frontend/public/
+!frontend/public/**/*
+!assets/
+!assets/**/*
+!docs/
+!docs/**/*
+!README.md
+!CHANGELOG.md
+!LICENSE

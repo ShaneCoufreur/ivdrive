@@ -1,3 +1,76 @@
-node_modules
-.next
+# =========================================================================
+# Frontend .dockerignore
+# =========================================================================
+# Goals:
+#   - Slim Next.js build context: no node_modules, no .next, no test files.
+# =========================================================================
+
+# ---- VCS / metadata ------------------------------------------------------
+.git/
+.gitignore
+.dockerignore
+
+# ---- Secrets / env -------------------------------------------------------
+.env
+.env.*
 .env*.local
+!.env.example
+
+# ---- Dependencies --------------------------------------------------------
+node_modules/
+.pnp/
+.pnp.js
+.yarn/
+
+# ---- Build artifacts (must be excluded — Docker rebuilds them) ----------
+.next/
+out/
+build/
+dist/
+.turbo/
+.parcel-cache/
+
+# ---- TS / Next generated ------------------------------------------------
+next-env.d.ts
+*.tsbuildinfo
+tsconfig.tsbuildinfo
+.eslintcache
+
+# ---- Tests / coverage ---------------------------------------------------
+tests/
+__tests__/
+*.test.ts
+*.test.tsx
+*.spec.ts
+*.spec.tsx
+coverage/
+test-results/
+playwright-report/
+
+# ---- Lint / IDE ---------------------------------------------------------
+.eslintcache
+.eslintcache/*
+eslint.cache
+.stylelintcache
+.idea/
+.vscode/
+
+# ---- Logs ---------------------------------------------------------------
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---- Misc scratch -------------------------------------------------------
+.DS_Store
+Thumbs.db
+*.swp
+*.bak
+*.tmp
+*.orig
+*.rej
+*~
+.claude/
+.local-only/
