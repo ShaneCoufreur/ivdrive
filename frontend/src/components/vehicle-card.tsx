@@ -13,9 +13,6 @@ import {
   Battery,
 
   MapPin,
-
-  Clock,
-
   Trash2,
 
   Loader2,
@@ -32,9 +29,7 @@ import {
 
   Zap,
 
-  ChevronRight,
-
-} from "lucide-react";
+  ChevronRight} from "lucide-react";
 
 
 
@@ -578,13 +573,7 @@ export function VehicleCard({
 
           </div>
 
-          <span className="flex items-center gap-1 text-xs text-iv-muted whitespace-nowrap flex-shrink-0 pt-1">
-
-            <Clock size={11} />
-
-            {formatTimeAgo(status?.last_updated ?? null)}
-
-          </span>
+          
 
         </div>
 

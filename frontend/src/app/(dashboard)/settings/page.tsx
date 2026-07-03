@@ -489,6 +489,12 @@ export default function SettingsPage() {
   }, []);
 
   useEffect(() => {
+    loadVehicles();
+    loadGeofences();
+    loadExportJobs();
+  }, [loadVehicles, loadGeofences, loadExportJobs]);
+
+  useEffect(() => {
     const hasPending = exportJobs.some(j => j.status === "PENDING" || j.status === "PROCESSING");
 
     if (hasPending) {
