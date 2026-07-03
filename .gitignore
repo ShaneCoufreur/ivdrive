@@ -1,18 +1,134 @@
-data/
-backend/.venv/
-frontend/.next/
-__pycache__/
-issues.md
-release-notes.md
+# =========================================================================
+# iVDrive .gitignore
+# =========================================================================
+# Goals:
+#   - Never push secrets, env, or local DB dumps.
+#   - Never push build artifacts (frontend dist, backend caches).
+#   - Never push local-only docs/scripts (.claude/, _local_docs/, etc.).
+#   - Never push editor / IDE scratch files.
+# =========================================================================
+
+# ---- Local config / secrets ---------------------------------------------
 .env
 .env.*
 !.env.example
 !backend/.env.example
-.DS_Store
-# Local / dev-only docs (never commit or ship)
+*.pem
+*.key
+secrets/
+
+# ---- Local-only docs / helper scripts (never shipped) -------------------
 _local_docs/
 _deprecated_scripts/
 .claudemem
+.claude/
 CLAUDE.md
-.claude
 run_tests.py
+issues.md
+release-notes.md
+
+# ---- Python: build / cache artifacts ------------------------------------
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+.eggs/
+.pyre/
+.pyright_cache/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.cache/
+pip-wheel-metadata/
+
+# ---- Python: venvs -------------------------------------------------------
+backend/.venv/
+.venv/
+venv/
+env/
+.venv.bak/
+venv.bak/
+
+# ---- Node / Next.js: build artifacts ------------------------------------
+node_modules/
+.pnp/
+.pnp.js
+.yarn/install-state.gz
+frontend/.next/
+frontend/out/
+frontend/build/
+frontend/dist/
+.turbo/
+.parcel-cache/
+.eslintcache
+
+# ---- TS / Next generated files ------------------------------------------
+frontend/next-env.d.ts
+frontend/tsconfig.tsbuildinfo
+*.tsbuildinfo
+
+# ---- Test / coverage / debug outputs ------------------------------------
+tests/.cache/
+tests/.tmp/
+*.test.out
+*.orig
+*.rej
+*.tmp
+*.bak
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+$RECYCLE.BIN/
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# ---- Jupyter / notebooks ------------------------------------------------
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/
+
+# ---- Logs / runtime data ------------------------------------------------
+*.log
+logs/
+backend/logs/
+frontend/logs/
+*.pid
+*.seed
+*.pid.lock
+
+# ---- Local DB dumps / data snapshots ------------------------------------
+data/
+backend/data/
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.sql.gz
+*.csv.gz
+*.parquet
+
+# ---- OS / shell noise ---------------------------------------------------
+.Trash-*
+.fseventsd/
+.Spotlight-V100/
+TemporaryItems/
+.tmp/
+
+# ---- Misc scratch -------------------------------------------------------
+*.local
+.cache/
+*.tgz
+*.tar.gz
+!frontend/public/**/*.tar.gz

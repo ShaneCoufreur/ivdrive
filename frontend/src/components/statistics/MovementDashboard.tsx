@@ -79,7 +79,7 @@ function matchGeofence(lat: number, lon: number, geofences: Geofence[]): Geofenc
 
 function buildActivityTimeline(locations: VisitedLocation[], geofences: Geofence[]): ActivityEvent[] {
   if (locations.length === 0) return [];
-  const sorted = [...locations].sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  const sorted = locations.toSorted((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
   const STAY_RADIUS_M = 80;
   const MIN_STAY_MS = 5 * 60 * 1000;
   const MAX_GAP_MS = 30 * 60 * 1000; // 30 min — break cluster on longer gaps
@@ -183,13 +183,13 @@ export function MovementDashboard({ vehicleId, dateRange }: MovementDashboardPro
   const fromISO = dateRange.from.toISOString();
   const toISO = dateRange.to.toISOString();
 
-  // Period-based time budget — refetches when date range changes
+  // Period-based time budget — refetches when date range or vehicle changes
   useEffect(() => {
     setLoadingBudget(true);
-    api.getTimeBudget(vehicleId)
+    api.getTimeBudget(vehicleId, fromISO, toISO)
       .then(setTimeBudget)
       .finally(() => setLoadingBudget(false));
-  }, [vehicleId]);
+  }, [vehicleId, fromISO, toISO]);
 
   // Period-based location data + Top Places — refetches when date range changes
   const fetchPeriodData = useCallback(async () => {
