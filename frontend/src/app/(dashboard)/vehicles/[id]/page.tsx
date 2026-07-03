@@ -1919,7 +1919,9 @@ export default function VehicleDetailPage() {
         const totalChargedKwh = recentSessions.reduce((acc, s) => acc + (s.energy_kwh || 0), 0);
 
         
-
+        // Charging Mix: AC vs DC split of the last 30 days' charging sessions (by count, not energy).
+        // acPercent = sessions explicitly tagged "AC"; dcPercent is the remainder, so any session
+        // with a null/unknown charging_type is counted as DC.
         const acCount = recentSessions.filter(s => s.charging_type === "AC").length;
 
         const totalSessionsCount = recentSessions.length;
@@ -2075,7 +2077,9 @@ export default function VehicleDetailPage() {
                   </div>
 
                 </div>
-
+                <div className="mt-3 flex items-center gap-2 text-xs font-medium text-iv-muted">
+                  <span>AC vs DC · last 30 days ({totalSessionsCount} sessions)</span>
+                </div>
               </div>
 
 

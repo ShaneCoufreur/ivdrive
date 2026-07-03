@@ -3,6 +3,25 @@
 ## [Unreleased]
 ### Maintenance
 - **Repo hygiene — `.gitignore` / `.dockerignore` cleanup**: rewrote all four ignore files (`.gitignore`, root `.dockerignore`, `backend/.dockerignore`, `frontend/.dockerignore`) to cover common noise (Python `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `.coverage`, `htmlcov`, `*.egg-info`, venvs, `.env*`, logs; Node `node_modules`, `.next`, `dist`, `build`, `out`, `.eslintcache`, `tsconfig.tsbuildinfo`; editor/IDE scratch `*.orig`, `*.bak`, `*.tmp`, `*.swp`, `.DS_Store`, `Thumbs.db`, `.idea/`, `.vscode/`). Removed the accidentally-tracked editor backup `frontend/src/app/(dashboard)/admin/page.tsx.orig`. Smaller Docker build context, no secrets or local DB dumps can leak into the repo.
+## [v1.1.1] - 2026-06-20
+Maintenance & reliability release: fixes the charging-receipt edit lag (stale server cache), surfaces Škoda connection/auth failures in the UI so users know when to reconnect, makes the vehicle "sync off" state honest, and adds mobile-responsive fixes. Includes a statistics-correctness verification pass and a build-breaking syntax fix.
+
+### Added
+- **Connection-health surfacing**: the vehicle Settings card now shows a clear banner + badge when data collection is failing. Two states — **red "Reconnect required"** when Škoda rejects the saved login (auth/token expired), and **amber "Connection Issues"** when the vehicle is repeatedly unreachable (transient Škoda/network errors, ≥3 consecutive failed cycles). Both offer a one-click Reconnect. Backed by new `ConnectorSession` health fields populated every collection cycle and exposed on `GET /api/v1/vehicles`.
+- **Charging Mix caption** (vehicle Statistics): the AC/DC split card gained a descriptive caption ("AC vs DC · last 30 days (N sessions)") consistent with the other stat cards.
+
+### Fixed
+- **Charging-receipt edit lag (stale server cache)**: editing a charging session (provider/kWh/price) appeared to do nothing for up to 60s, then updated. Root cause: the server-side Valkey `CacheMiddleware` caches analytics GETs for 60s and the mutation never invalidated it (the `invalidate_vehicle_cache` helper existed but was dead code). `PATCH .../analytics/charging-sessions`, `PUT /vehicles/{id}`, and `DELETE /vehicles/{id}` now bust the vehicle's cache on write, so edits are reflected immediately. Verified end-to-end (GET after PATCH returns the new value with `X-Cache: MISS`).
+- **"Sync off" still showed "Active"**: disabling a vehicle's sync stopped collection (the poll job is unregistered) but left `connector_status` stuck at "active", so the badge kept reading Active. Toggling sync off now sets status **"paused"** (badge "Sync Off") and clears failure counters; re-enabling sets "pending" until the next successful poll. The Settings badge shows "Sync Off" whenever collection is disabled (covers pre-existing rows), and health banners are suppressed while paused.
+- **Silent collection failures**: the collector's `_safe()` swallowed every Škoda error and still marked the cycle "active"/fresh, so persistent failures were invisible to the user. Cycles now record success/failure honestly (`last_success_at`, `consecutive_failures`, `last_error_text`); a 401/403 flags `auth_failed`; transient errors accrue failures without forcing a reconnect prompt. Parked cycles no longer write a misleading "offline" `ConnectionState` row when Škoda was merely unreachable.
+- **Build-breaking syntax error** — `DrivingDashboard.tsx` had a comment line missing its `//` prefix (committed in `ff14ce3`), which fails the production transpile regardless of `ignoreBuildErrors`.
+- **Mobile layout** — Admin tabs now scroll horizontally instead of overflowing on small screens; the AI chat widget/launcher is repositioned (above the mobile nav bar, full-width sheet on phones, unchanged on desktop).
+
+### Changed
+- **Efficiency metric documentation** (`analytics.py`, migration `ba81d9f38011`): clarified in code that `v_advanced_trip_stats.avg_eff_*` and the overview `avg_kwh_100km` are **distance-weighted** consumption (`SUM(kwh)/SUM(distance)*100`), not an average of per-trip ratios, and marked the superseded `AVG`-of-ratios migration obsolete (the fix landed in `93b2a201b1a4`). Documentation only — no value change. Confirmed the live overview numbers (battery, range, odometer, trip mix, efficiency, €/kWh) match the raw database.
+
+### Database
+- `c7d8e9f0a1b2_add_connector_health_fields.py` — adds `last_success_at` (timestamptz), `consecutive_failures` (int, default 0), and `last_error_text` (varchar 255) to `connector_sessions`. New migration head; no data backfill required.
 
 ## [v1.1.0] - 2026-06-14
 Minor release: AI assistant goes production-grade — streamed chat answers,
@@ -16,6 +35,7 @@ compose template.
 - **Branded feedback system** (`components/ui/feedback.tsx`): app-wide `useConfirm()` modal + `useToast()` notifications styled to the iVDrive design system, replacing all native `window.confirm()`/`alert()` popups in the admin pages and AI panel.
 
 ### Fixed
+- **Duplicate migration revision (multiple heads)**: `a1b2c3d4e5f6` was assigned to BOTH `add_smart_polling_intervals` and `add_place_stay_durations_view` (a merge collision), so `alembic upgrade head` failed with "Revision a1b2c3d4e5f6 is present more than once" / "Multiple head revisions are present". Re-issued the place-stay view migration as `b7e4f1a9c2d8` chained onto the real head `b2c3d4e5f6a8`; `add_smart_polling_intervals` keeps `a1b2c3d4e5f6`. View body is `CREATE OR REPLACE`, so it applies cleanly.
 - **Production-restore migration path**: the `f4b2c3d4e5f6` bridge migration falsely assumed restored production DBs already had the AI/vector base (vector extension, `ai_embeddings` + chat tables, RLS, role). They don't — production never ran the AI feature — so `alembic upgrade head` failed at `8b3c4d5e6f71` (`TRUNCATE ai_embeddings` on a non-existent table). Added idempotent catch-up migration `f5a6b7c8d9e0` that recreates the full AI/vector base, inserted before the dependent migrations. Rehearsed end-to-end against a production restore: clean upgrade to head, schema identical to dev.
 - **admin_ai.py `update_user_ai_access`**: editing one override field (e.g. `note`) wiped all other per-user overrides — the `ON CONFLICT DO UPDATE` overwrote unset columns with `NULL`. Now uses `COALESCE(EXCLUDED.x, existing)` to preserve untouched fields. (PR #149)
 - **chat_tools.py `execute_read_only_sql`**: `Decimal` values from SQL aggregates (distance, energy, costs) crashed `json.dumps`, surfacing as `SQL_ERROR` for most analytical queries. Now coerced to `float`. (PR #149)
@@ -60,61 +80,199 @@ compose template.
 
 ## [Unreleased] - 2026-05-08
 ### Fixed
-- vehicles.py (`/statistics` endpoint): Use `AT TIME ZONE 'Europe/Vilnius'` for `date_trunc` on both trips and charging sessions — trips near local midnight were bucketed into wrong UTC day, causing Driving Stats historical data to show only 2 days instead of full May 1-8 period.
-- MovementDashboard (frontend): Use geofence label as grouping key in Top Places instead of lat/lon grid — same Work geofence visits now merge into a single entry regardless of cluster centroid drift.
-- analytics.py (`get_efficiency_curve`): Filter temperature buckets with `data_points < 3` — view was returning single-trip buckets producing unrealistic ~3.6 kWh/100km at 5°C.
-- analytics.py (`get_hvac_isolation`): Return specific diagnostic summary when no metrics calculable (cold vs optimal trip types missing) instead of static generic message.
+- DrivingDashboard + MovementDashboard (frontend): All data sources now respect the selected dateRange — odometer, visited locations, time budget, and trips all use the same period filter. Previously time budget and mileage showed all-time data regardless of the date picker.
+- DrivingDashboard (frontend): KPI cards now show period totals (sum of all days in range) instead of only the latest-day values. Historical stats table now shows all available rows with scrollable overflow instead of hard-coded slice of 7.
+- analytics.py (`movement-stats`): Made `from_date`/`to_date` query params optional — when absent, returns all-time aggregation. Previously called `/time-budget` endpoint which had no date filter support.
+- MovementDashboard (frontend): Time Budget now fetches period-filtered data instead of all-time. Badge updated from "All-time" to "Period".
+
+### Fixed
+- vehicles.py (`/statistics` endpoint): Timezone-aware day truncation using vehicle.home_tz field — supports all IANA timezones; falls back to Europe/Vilnius for vehicles without home_tz set. Eliminates UTC midnight misalignment that caused Driving Stats historical data to show only 2 days instead of the full selected period. **Security**: Uses SQLAlchemy `.op("AT TIME ZONE")(tz)` instead of `text(f"... '{tz}' ...")` — tz validated against IANA whitelist before reaching SQL.
+- MovementDashboard (frontend): Use geofenceId instead of label string-matching to group Top Places — same Work geofence visits now merge into a single entry regardless of cluster centroid drift. Duration-weighted centroid averaging applied for coordinate-keyed (non-geofence) stays; geofence stays keep original center coordinates.
+- analytics.py (`get_efficiency_curve`): Filter temperature buckets with `data_points < 3` — only buckets with ≥3 trips are returned, preventing unrealistic averages (~3.6 kWh/100km) from single-trip samples.
+- analytics.py (`get_hvac_isolation`): Return specific diagnostic summary when no metrics calculable — explains which trip type is missing (cold vs optimal) and what date range is needed.
+- Security: `vehicle.home_tz` validated against a whitelist of ~60 known-good IANA timezone strings before use in SQL; `GROUP BY` / `ORDER BY` reference SELECT alias "period" instead of repeating f-string expressions.
 
 ## [v1.0.23] - 2026-05-04
-## [Unreleased] - 2026-05-07
 ### Fixed
-- collector.py: Replace `status_resp.overall.battery` attribute access with `getattr(..., 'battery', None)` — `VehicleStatusOverall` pydantic model has no `battery` field, causing `AttributeError` on every vehicle collection and blocking ALL data ingestion since ~May 5. Also fixed duplicate reference at battery temperature extraction (line ~956).
-- BatterySoHDashboard: Battery SoH tab with derived SoH from charging sessions + Skoda BMS comparison + degradation curve (via `battery-health` endpoint).
-- security-scan.yml: Trivy DB pre-download step; exit-code changed to 0 (report-only, doesn't block merges); SEMGREP_APP_TOKEN removed (free CI mode with --disable-version-check).
+- collector.py: Replace `status_resp.overall.battery` attribute access with `getattr(..., 'battery', None)` — `VehicleStatusOverall` pydantic model has no `battery` field, causing `AttributeError` on every vehicle collection and blocking ALL data ingestion since ~May 5.
+- HVACCostCard: Ensure `representative_temp_celsius` is numeric before `toFixed()` — defensive fix against string concatenation (e.g. "5"+"10"="510°C").
+- security-scan.yml: Update Trivy action from v0.36.0 to v0.49.1; remove separate DB download step (v0.49.1 handles DB init automatically); exit-code 0 (report-only); remove SEMGREP_APP_TOKEN.
 
 ### Fixed
-- security-scan.yml: Update Trivy action from v0.36.0 to v0.49.1, remove separate DB download step (v0.49.1 handles DB init automatically). Fixes "Download Trivy vulnerability database" step failure blocking all workflow runs.
-- ChargingEconomicsDashboard: Remove duplicate Recent Sessions Table block (copy-paste error — same table rendered twice).
-- CarOverviewDashboard: Switch `Promise.all` → `Promise.allSettled` — if 1-2 of 15 parallel API requests fail, dashboard still renders partial data.
+- ChargingEconomicsDashboard: Remove duplicate Recent Sessions Table block (same table was rendered twice).
+- CarOverviewDashboard: Switch `Promise.all` → `Promise.all` → `Promise.allSettled` — if 1-2 of 15 parallel API requests fail, dashboard still renders partial data.
 - StatisticsShell: Guard ArrowLeft/ArrowRight keyboard navigation against `input`/`textarea` elements (accessibility).
 - settings/page.tsx: Fix `displayVal` to preserve explicit `0` values (was treating `0` as falsy).
-- security-scan.yml: Scope Trivy image scan to `./backend` with `target:api`; scope Trivy filesystem scan to `./backend` (was scanning entire repo root).
-- MovementDashboard: Top Places React key changed from GPS coords to `place.label` — avoids key collision risk for places within ~1m.
+- security-scan.yml: Scope Trivy scans to `./backend` directory only.
+- MovementDashboard: Top Places React key changed from GPS coords to `place.label` — avoids key collision risk.
 - MovementDashboard: Top Places GPS display increased from 4 → 5 decimal places (~1m precision).
-- ChargingCurveIntegralsV2: `total_energy` sum rounded to 2 decimal places — eliminates float artifact like `29.130000000000003 kWh`.
-- SpeedTempMatrixDashboard: Removed all `console.error` calls — ErrorBoundary handles errors silently in production.
-- SpeedTempMatrixDashboard: ErrorBoundary prevents blank panels when chart rendering fails.
-- `_get_nearest_elevation`: Fixed `text()` SQL expression — was using invalid SQLAlchemy usage causing elevation cache to always miss. Now uses proper bound parameters.
-- Elevation Penalty endpoint: Returns "Not enough trips with elevation data for analysis" message when all trips lack elevation data.
-- HVAC Cost Summary: Track actual temperature band instead of hardcoding "10-20°C"; show correct band in summary.
-- alembic: merged vehicle_positions index branches (d1e2f3a4bb5c + a1b2c3d4e5f8) resolving multiple-heads migration conflict; production upgrade path now clean.
+- ChargingCurveIntegralsV2: `total_energy` sum rounded to 2 decimal places — eliminates `29.130000000000003 kWh` float artifact.
+- SpeedTempMatrixDashboard: ErrorBoundary prevents blank panels; removed all `console.error` calls.
+- `_get_nearest_elevation`: Fixed `text()` SQL expression — proper bound parameters for elevation cache.
+- Elevation Penalty endpoint: Returns "Not enough trips with elevation data for analysis" when all trips lack elevation.
+- HVAC Cost Summary: Track actual temperature band instead of hardcoding "10-20°C".
+- alembic: merged vehicle_positions index branches resolving multiple-heads migration conflict.
 
-## [Unreleased] - 2026-05-01
+## [v1.0.22] - 2026-04-22
 ### Added
-- BatterySoHDashboard: Battery SoH tab with derived SoH from charging sessions + Skoda BMS comparison + degradation curve.
+- Advanced Statistics: TripsDashboard, MovementDashboard, DrivingStatisticsDashboard, ChargingStatisticsDashboard, MileageKMDashboard, ChargingCurveDashboard, HVACCostCard, ChargingCurveIntegralsDashboard, ElevationPenaltyDashboard, SpeedTempMatrixDashboard, IceTcoDashboard, RouteEfficiencyDashboard, PredictiveSocDashboard.
+- Analytics engine: efficiency calibration, vampire drain analysis, battery health, charging economics, route efficiency.
+- Geofencing: home/work geofence locations, distance calculations, location caching.
+- Settings: per-vehicle efficiency calibration, collector configuration.
 
 ### Fixed
-- MovementDashboard: Remove dead `formatDuration()` wrapper that divided by 60 before passing to `formatSmartDuration`, causing time values to display 60x smaller than actual.
-- Migration 4c5c9e5b4a60: Remove destructive DROP TABLE/DROP INDEX ops that would have deleted 481 `geocoded_locations` rows and 516 `charging_sessions` rows. Now only adds calibration columns to `user_vehicles`.
+- ChargingCurveDashboard: API response mismatch fixed.
+- TripsDashboard: React.Fragment replaced with `<>` shorthand.
+- Winter Penalty: useId() for SVG gradient to avoid hydration mismatch (React #310).
+- ChargingCurveIntegralsV2: brackets query no longer ignores date filters.
+- Statistics: Energy Used now shows correct values for days with charging during parked periods.
+- TripElevationCard: matches actual API response shape.
+- `_store_trip_end`: selects oldest trip; Query bounds added on limit params.
 
-## [Unreleased] - 2026-05-01
+## [v1.0.21] - 2026-04-14
 ### Added
-- BatterySoHDashboard: Battery SoH tab with derived SoH from charging sessions + Skoda BMS comparison + degradation curve.
+- Battery Health endpoint and BatterySoHDashboard with derived SoH from charging sessions.
+- Charging Economics dashboard with AC/DC split, cost trends, session details.
 
 ### Fixed
-- MovementDashboard: Remove dead formatDuration() wrapper that divided by 60 before passing to formatSmartDuration, causing time values to display 60x smaller than actual.
-- Migration 4c5c9e5b4a60: Remove destructive DROP TABLE/DROP INDEX ops that would have deleted 481 geocoded_locations rows and 516 charging_sessions rows. Now only adds calibration columns to user_vehicles.
+- P1 triage: elevation-stats endpoint, hvac-cost pagination, elevation-penalty N+1 queries.
+- Arrival SOC calculation and charging wasted% denominator.
+- Elevation cache LRU cap + ChargingCurveDashboard apiFetch fix.
 
-## [Unreleased] - 2026-04-30
+## [v1.0.20] - 2026-04-10
+### Added
+- RouteEfficiencyDashboard with street-name reverse geocoding.
+- PredictiveSocDashboard for arrival SoC prediction.
+
 ### Fixed
-- Charging Curve Integrals: `total_energy_kwh` display now rounded to 2 decimal places — eliminates `29.130000000000003 kWh` float artifact.
-- ICE vs EV: Added proper spacing in savings line — `€ saved` and `€/kWh`, `€/L` instead of `€saved` and `0.3499€/kWh`.
-- ICE vs EV: Rate values now display at 2 decimal precision max (was 4 decimals like `0.1955€/kWh`).
-- Car Overview: Vampire drain rate display reduced from 4 to 2 decimal places on hourly rate.
-- Movement Dashboard: GPS coordinates in Top Places now display 5 decimal places (~1m precision).
-- SpeedTempMatrixDashboard: getColor null guard, max===min cap, ErrorBoundary, removed broken Tooltip formatter.
-- Arrival SOC ~0%: arrival SOC calculation fixed, charging wasted% denominator fixed.
-- Route Efficiency: GPS coordinates show 5 decimal places in tooltips.
-- Elevation Penalty: use asyncio.gather for concurrent elevation lookups (2 round-trips instead of 2*N).
+- SpeedTempMatrixDashboard: getColor null guard, max===min cap, ErrorBoundary.
+- CarOverviewDashboard: Vampire drain rate display precision.
+- MovementDashboard: GPS coordinates 5 decimal places in Top Places.
 
-All notable changes to the iVDrive project will be documented in this file.
+## [v1.0.19] - 2026-04-07
+### Added
+- ICE vs EV TCO comparison dashboard.
+- Battery SoH degradation curve with Skoda BMS comparison.
+
+## [v1.0.18] - 2026-04-05
+### Added
+- ChargingCurveIntegralsDashboard with SoC bracket analysis and wasted time callout.
+- HVAC Power Isolation dashboard.
+
+### Fixed
+- ChargingeCurveIntegralsV2: session_id filter now works correctly with date filters.
+- _store_trip_end selects oldest trip correctly; Query bounds prevent unbounded results.
+
+## [v1.0.17] - 2026-04-03
+### Added
+- SpeedTempMatrixDashboard — speed × temperature consumption heatmap.
+- ElevationPenaltyDashboard — elevation impact on efficiency.
+
+### Fixed
+- N+1 elevation queries → asyncio.gather for concurrent lookups.
+- ErrorBoundary + console.error gating in SpeedTempMatrixDashboard.
+- Elevation stats schema and response_model.
+
+## [v1.0.16] - 2026-04-01
+### Added
+- StatisticsShell: tab consolidation (Charging Analysis, Driving Summary).
+- ChargingAnalysis tab: merged ChargingCurve + ChargingCurveIntegrals.
+- DrivingSummaryDashboard: Trips + Movement + DrivingStats + Mileage merged.
+
+### Fixed
+- TripsDashboard: Polyline onClick to eventHandlers (Leaflet v5 compat).
+- StatisticsShell: restore missing ChargingStatisticsDashboard import.
+- Route Efficiency + Predictive SoC tabs restored.
+
+## [v1.0.15] - 2026-03-28
+### Added
+- CarOverviewDashboard: Live Pulse hero + Winter Penalty + Vampire Drain.
+- MovementDashboard: visited locations map, activity timeline, geofences, time budget.
+
+### Fixed
+- Odometer readings without date filter for mileage trend.
+- All-time data in MovementDashboard.
+
+## [v1.0.14] - 2026-03-26
+### Added
+- ChargingEconomicsDashboard: sessions, energy, cost, AC/DC split, trend chart.
+- Route efficiency and predictive SoC tabs.
+
+### Fixed
+- Next.js 15 compatibility: next.config.js, eslint ignore.
+- Auth context: add is_totp_enabled to User interface.
+- StatisticsShell: replace charging-stats+analysis with charging-economics.
+
+## [v1.0.13] - 2026-03-24
+### Added
+- Statistics page: full tab navigation with CarOverview, Trips, Movement, Driving Stats, Charging Stats, Charging Curve, HVAC Isolation, Charging Curve Integrals, Elevation Penalty, Speed × Temp, ICE vs EV, Route Efficiency, Arrival SoC, Mileage, Battery SoH.
+
+### Fixed
+- Per-vehicle inline Efficiency Calibration in vehicle card settings.
+- Skoda OAuth defaults restored, no blocking validator.
+
+## [v1.0.12] - 2026-03-22
+### Added
+- Advanced Statistics backend endpoints: efficiency, vampire drain, battery health, charging economics, route efficiency, predictive soc, speed-temp-matrix, elevation penalty.
+
+### Fixed
+- DisplayVal NaN guard and collector-auth error message.
+
+## [v1.0.11] - 2026-03-20
+### Added
+- Vehicle status overview: battery, range, charging, climatization state bands.
+- WLTP range endpoint and display.
+
+## [v1.0.10] - 2026-03-18
+### Added
+- Trip telemetry: full trip tracking with odometer, battery, position, temperature, HVAC state.
+- Drive level data with speed, acceleration, deceleration, elevation.
+
+## [v1.0.9] - 2026-03-15
+### Added
+- Charging session tracking: plug-in/out events, charge rate, energy, duration.
+- Charging curve recording: SoC, power, temperature over time.
+
+## [v1.0.8] - 2026-03-12
+### Added
+- Geocoded locations cache for reverse geocoding.
+- Elevation data integration with OpenTopoData.
+
+## [v1.0.7] - 2026-03-10
+### Added
+- Collector: full MySkoda API integration for Enyaq/iV vehicles.
+- OAuth token management with encrypted storage.
+- Background scheduler for periodic data collection.
+
+## [v1.0.6] - 2026-03-07
+### Added
+- User settings: calibration, geofences, notifications.
+- User vehicle management with VIN registration.
+
+## [v1.0.5] - 2026-03-05
+### Added
+- Authentication: JWT + TOTP 2FA support.
+- User management and session handling.
+
+## [v1.0.4] - 2026-03-03
+### Added
+- Database: PostgreSQL with Alembic migrations.
+- API v1 endpoints: vehicles, trips, charging, analytics.
+
+## [v1.0.3] - 2026-03-01
+### Added
+- Frontend: Next.js 15 dashboard with Tailwind CSS.
+- Dark/light theme support.
+
+## [v1.0.2] - 2026-02-28
+### Added
+- Docker Compose setup: backend, frontend, postgres, valkey.
+
+## [v1.0.1] - 2026-02-26
+### Added
+- Project skeleton: FastAPI backend, Next.js frontend.
+- GitHub Actions CI/CD with security scanning.
+
+## [v1.0.0] - 2026-02-24
+### Added
+- Initial release: iVDrive — Škoda API vehicle statistics platform.

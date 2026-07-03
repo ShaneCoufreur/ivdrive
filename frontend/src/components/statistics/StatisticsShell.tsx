@@ -429,9 +429,7 @@ export function StatisticsShell({ vehicleId }: { vehicleId: string }) {
           </Tabs.Content>
 
           <Tabs.Content value="elevation-penalty">
-
-            <ElevationPenaltyDashboard vehicleId={vehicleId} />
-
+            <ElevationPenaltyDashboard vehicleId={vehicleId} dateRange={dateRange} />
           </Tabs.Content>
 
           <Tabs.Content value="speed-temp-matrix">
@@ -441,21 +439,15 @@ export function StatisticsShell({ vehicleId }: { vehicleId: string }) {
           </Tabs.Content>
 
           <Tabs.Content value="ice-tco">
-
-            <IceTcoDashboard vehicleId={vehicleId} />
-
+            <IceTcoDashboard vehicleId={vehicleId} dateRange={dateRange} />
           </Tabs.Content>
 
           <Tabs.Content value="route-efficiency">
-
-            <RouteEfficiencyDashboard vehicleId={vehicleId} />
-
+            <RouteEfficiencyDashboard vehicleId={vehicleId} dateRange={dateRange} />
           </Tabs.Content>
 
           <Tabs.Content value="predictive-soc">
-
-            <PredictiveSocDashboard vehicleId={vehicleId} />
-
+            <PredictiveSocDashboard vehicleId={vehicleId} dateRange={dateRange} />
           </Tabs.Content>
 
           <Tabs.Content value="mileage">
@@ -465,9 +457,7 @@ export function StatisticsShell({ vehicleId }: { vehicleId: string }) {
           </Tabs.Content>
 
           <Tabs.Content value="battery-soh">
-
-            <BatterySoHDashboard vehicleId={vehicleId} />
-
+            <BatterySoHDashboard vehicleId={vehicleId} dateRange={dateRange} />
           </Tabs.Content>
 
         </Tabs.Root>
