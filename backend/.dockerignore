@@ -1,5 +1,67 @@
-__pycache__
-*.pyc
+# =========================================================================
+# Backend .dockerignore
+# =========================================================================
+# Goals:
+#   - Slim Python build context (no tests, caches, venvs, local DB).
+# =========================================================================
+
+# ---- VCS metadata --------------------------------------------------------
+.git/
+.gitignore
+
+# ---- Secrets / env -------------------------------------------------------
 .env
-.venv
-tests
+.env.*
+!.env.example
+
+# ---- Python caches / venvs / packaging ----------------------------------
+__pycache__/
+*.pyc
+*.pyo
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+.pyre/
+.pyright_cache/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.tox/
+.coverage
+coverage.xml
+htmlcov/
+.venv/
+venv/
+env/
+
+# ---- Tests / local runtime outputs --------------------------------------
+tests/
+**/tests/
+test-results/
+
+# ---- Local DB / data -----------------------------------------------------
+data/
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.sql.gz
+
+# ---- Logs ---------------------------------------------------------------
+*.log
+logs/
+
+# ---- Editor / OS noise --------------------------------------------------
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*.bak
+*.tmp
+*.orig
+*~
+.claude/
+.claudemem
+_local_docs/

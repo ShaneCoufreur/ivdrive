@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+### Maintenance
+- **Repo hygiene — `.gitignore` / `.dockerignore` cleanup**: rewrote all four ignore files (`.gitignore`, root `.dockerignore`, `backend/.dockerignore`, `frontend/.dockerignore`) to cover common noise (Python `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `.coverage`, `htmlcov`, `*.egg-info`, venvs, `.env*`, logs; Node `node_modules`, `.next`, `dist`, `build`, `out`, `.eslintcache`, `tsconfig.tsbuildinfo`; editor/IDE scratch `*.orig`, `*.bak`, `*.tmp`, `*.swp`, `.DS_Store`, `Thumbs.db`, `.idea/`, `.vscode/`). Removed the accidentally-tracked editor backup `frontend/src/app/(dashboard)/admin/page.tsx.orig`. Smaller Docker build context, no secrets or local DB dumps can leak into the repo.
+
 ## [v1.1.0] - 2026-06-14
 Minor release: AI assistant goes production-grade — streamed chat answers,
 admin-controlled RAG embedding backfill, and a safe production-restore migration
