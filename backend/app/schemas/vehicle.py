@@ -43,6 +43,10 @@ class VehicleResponse(BaseModel):
     warning_lights: list[dict] | None = None
     connector_status: str | None = None
     last_fetch_at: datetime | None = None
+    # Connection health
+    last_success_at: datetime | None = None
+    consecutive_failures: int = 0
+    last_error_text: str | None = None
     created_at: datetime
     # Efficiency calibration
     charger_power_kw: float | None = None
@@ -123,3 +127,13 @@ class VehicleStatusResponse(BaseModel):
     is_in_motion: bool | None = None
 
     connector_status: str | None = None
+
+
+class TopPlaceItem(BaseModel):
+    geofence_id: uuid.UUID | None = None  # null for unknown locations
+    place_name: str                        # "Home", "Work", or reverse-geocoded address
+    latitude: float | None = None
+    longitude: float | None = None
+    total_seconds: int
+    stay_count: int
+    model_config = {"from_attributes": True}
