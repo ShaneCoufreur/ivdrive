@@ -186,9 +186,6 @@ export function MovementDashboard({ vehicleId, dateRange }: MovementDashboardPro
   // Period-based time budget — refetches when date range changes
   useEffect(() => {
     setLoadingBudget(true);
-  }
-
-  useEffect(() => {
     api.getTimeBudget(vehicleId)
       .then(setTimeBudget)
       .finally(() => setLoadingBudget(false));
