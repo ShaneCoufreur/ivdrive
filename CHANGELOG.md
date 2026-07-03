@@ -1,5 +1,52 @@
 # Changelog
 
+## [v1.1.2] - 2026-07-03
+Major release: **Battery Health Passport** is now a fully-operationalised product feature. Real, data-driven State of Health (replaces Škoda's hardcoded 95% BMS value), per-vehicle data-health freshness, scheduled anomaly detection + monthly HTML email reports, and a complete admin console for tier config + per-user overrides. Plus a comprehensive frontend quality pass (react-doctor 264→92 issues, score 45→48) and tightened repo hygiene.
+
+### Added
+- **Battery Health Passport — ops model + monthly email** (PR #153). The headline feature of this release.
+  - **`battery_soh.py`** — real State of Health computation. Replaces the constant 95% from Škoda's BMS (which was 95.0 across 2,840 sample rows in dev DB). Multi-method: capacity-based + throughput-based, with temperature correction and SoC calibration. Persistence: `battery_soh_estimates`, `battery_alerts`, `battery_usage_log`, `battery_tier_configs`, `battery_user_overrides`, `battery_scheduled_jobs`.
+  - **`battery_passport.py`** — monthly HTML email report with inline SVG SoH trend chart, capacity history, charging-window breakdown, and a colour-coded health badge. Recipients get a brand-styled "newsletter" rather than a raw report dump. S3-backed delivery via the dedicated `BATTERY_PASSPORTS_BUCKET` (separate from `data-extract`).
+  - **`battery_scheduler.py`** — `AsyncIOScheduler` wired into the FastAPI lifespan, with three job families: `job_detect_anomalies` (every 6 h — sudden SoH drops write `battery_alerts`), `job_monthly_passport` (1st @ 09:00 UTC — generate + email the Passport), and `job_recompute_vehicle` (on-demand one-off per vehicle).
+  - **`admin_battery.py`** — full admin console: `GET/PUT /admin/battery/tier-configs/{tier}` (free/plus/pro), `GET /admin/battery/users` + `PUT /admin/battery/users/{user_id}` (per-user overrides), `GET /admin/battery/usage` + `GET /admin/battery/usage/summary` (fleet-wide event log + aggregates), `GET /admin/battery/health` (fleet ops dashboard), `POST /admin/battery/vehicles/{id}/recompute` (manual re-estimate).
+  - **Admin UI** (`frontend/src/app/(dashboard)/admin/page.tsx`): full Battery tier/usage/health admin tab with TierConfig cards, per-user override editor, and a fleet-usage summary widget.
+  - **Settings UI** — Battery Health section: tier display, per-user override status, "Recompute now" button, last estimate metadata.
+- **Per-vehicle data-health endpoint + AI Support Coach tool** (`data_health.py`, `data_health-badge.tsx`). New `GET /api/v1/vehicles/{id}/data-health` returns per-source freshness (last_success_at, consecutive_failures, last_error_text) and an aggregated status (`healthy` / `degraded` / `stale` / `unknown`). The vehicle card now surfaces a coloured badge next to the connector state. The AI chat toolset gained a `vehicle_data_health` action so the AI Support Coach can answer "why is my car not updating?" with actual failure context.
+- **BatterySoHDashboard (vehicle Statistics)** — `Battery Health` tab with derived SoH from charging sessions + Škoda BMS comparison + degradation curve, reads from the new cached estimates endpoint (no live computation in the request path).
+- **Chat**: multi-turn RAG regression fixed. `route_intent_via_llm` now receives `conversation_history` and `detected_vehicle_name`; the agentic router can resolve pronouns ("that", "it", "how much did that cost?") in follow-ups. Vehicle-name resolution from prior turn (word-boundary, case-insensitive) is threaded through the 3-attempt SQL-healing loop.
+- **Chat**: strip `<think>...</think>` reasoning blocks from the final answer. `react-doctor.config.json` was tuned in lockstep.
+
+### Fixed
+- **Frontend react-doctor cleanup — Passes 1, 2, 3, 5, 6A, 6B** (`fix/react-doctor-cleanup-passes-1-2-3-5`). Issues: **264 → 92 (−172)**, errors: 1 → 0, files: 48 → 28, score: **45 → 48**.
+  - **Pass 1**: deleted 11 dead files, swept 38 `type="button"` omissions on buttons, fixed `MovementDashboard` flicker (date-range dependency tracking), upgraded `next@16.2.6`.
+  - **Pass 2**: fixed `new Date()` hydration mismatches (`IVDriveAIWidget` + `DashboardLayout`), cleaned unused imports.
+  - **Pass 3**: audit + cleanup of mounted gates (consistent pattern across pages).
+  - **Pass 5**: `toSorted` over `sort()` (immutable), dropped unused exports.
+  - **Pass 6A**: accessibility sweep — 5 click handlers on `div`s got `role="button" + tabIndex={0} + onKeyDown(Enter/Space)` (AddVehicleModal + 2nd modal backdrops, DeleteVehicleModal backdrop, Trip row selector, VehicleCard outer click); 4 labels paired with `htmlFor`/`id` (admin announcements form).
+  - **Pass 6B**: hoisted `new Date()` out of statistics + maintenance IIFEs into a single `statsNow` state in `VehicleDetailPage`, threaded through both chart IIFEs (eliminates per-render clock reads).
+- **vehicles/[id]/page.tsx — surface delete errors via toast** (`handleDelete`): previously swallowed errors and closed the modal on failure. Now keeps the modal open and routes the error through the existing `setCmdResult` toast.
+- **vehicles/[id]/page.tsx — guard `useEffect` data-fetch against unmount race conditions**: in-flight requests could `setState` on a stale instance. Now `let isMounted = true` + guard every setter + return cleanup.
+- **vehicles/[id]/page.tsx — `maintenanceDateRange` hydration mismatch** (Pass 6B follow-up): initialised with `new Date()` causing hydration mismatch. Fixed: `useState<... | null>(null)` + populate in `useEffect`.
+- **PR Agent feedback fixes on PR #153** (1 High, 4 Medium, 3 Low), all on the battery-soh-ops branch:
+  - **High** — `battery_passport.py` `_svg_chart`: `points = []` injected into f-string rendered as Python `repr()` (broken SVG `<circle>` list). Fixed: joined via generator expression.
+  - **Medium** — `battery_scheduler.py`: manual f-string JSON for `metadata_json` with `bool(...)` → `True`/`False` (invalid JSONB). Fixed: `json.dumps({...})`.
+  - **Medium** — `analytics.py` SoH derivation: `if not factory_kwh or factory_kwh <= 0` ran AFTER `db.execute(soh_stmt, ...)` (which divides by `:factory_kwh`). Fixed: moved guard before query.
+  - **Medium** — `battery_passport.py` `send_passport_email` + `send_passport_email_legacy`: synchronous `smtplib.SMTP` inside `async def` blocks the FastAPI event loop under scheduler load. Fixed: wrap in `_send_sync()` closure + `await asyncio.to_thread(...)`.
+  - **Medium** — (folded into the maintenance-`useEffect` fix above).
+  - **Low** — `battery_passport.py`: `badge_y = y_for(current_soh) - 28` can be negative for healthy batteries (clipping badge). Fixed: `max(0, ...)`.
+  - **Low** — (folded into the delete-toast fix above).
+  - **Low** — (folded into the `useEffect` cleanup fix above).
+- **battery-soh — realistic SoH range**: charging-loss correction (DC fast-charge loss is a normal artifact, not degradation signal) + tighter trim on outlier sessions.
+- **battery-soh — QA fixes**: temperature correction direction, SoH cap at 100%, confidence weighting, empty-chart guard for new vehicles with no charging history yet.
+- **battery-soh — scheduler signature**: scheduler calls updated to match the new `generate_passport_html` signature.
+- **battery-soh — S3 bucket isolation**: `BATTERY_PASSPORTS_BUCKET` is now its own bucket (was sharing `data-extract`).
+
+### Database
+- `a1b2c3d4e5g7_add_battery_soh_ops_model.py` — `battery_soh_estimates`, `battery_alerts`, `battery_usage_log`, `battery_tier_configs`, `battery_user_overrides`, `battery_scheduled_jobs` (6 new tables + indexes).
+
+### Maintenance
+- **Repo hygiene — `.gitignore` / `.dockerignore` cleanup** (PR #156). Rewrote all four ignore files (`.gitignore`, root `.dockerignore`, `backend/.dockerignore`, `frontend/.dockerignore`) to cover Python build caches (`.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `.coverage`, `htmlcov`, `*.egg-info`, venvs, `*.py[cod]`), Node/Next artifacts (`node_modules`, `.next`, `dist`, `build`, `out`, `.eslintcache`, `*.tsbuildinfo`), editor scratch (`*.orig`, `*.bak`, `*.tmp`, `*.swp`, `.DS_Store`, `Thumbs.db`, `.idea/`, `.vscode/`), Jupyter checkpoints, logs, local DB dumps, and OS junk. Removed the accidentally-tracked editor backup `frontend/src/app/(dashboard)/admin/page.tsx.orig`. Smaller Docker build context, no secrets or local DB dumps can leak into the repo.
+
 ## [v1.1.1] - 2026-06-20
 Maintenance & reliability release: fixes the charging-receipt edit lag (stale server cache), surfaces Škoda connection/auth failures in the UI so users know when to reconnect, makes the vehicle "sync off" state honest, and adds mobile-responsive fixes. Includes a statistics-correctness verification pass and a build-breaking syntax fix.
 
