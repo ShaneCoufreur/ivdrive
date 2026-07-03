@@ -183,13 +183,13 @@ export function MovementDashboard({ vehicleId, dateRange }: MovementDashboardPro
   const fromISO = dateRange.from.toISOString();
   const toISO = dateRange.to.toISOString();
 
-  // Period-based time budget — refetches when date range changes
+  // Period-based time budget — refetches when date range or vehicle changes
   useEffect(() => {
     setLoadingBudget(true);
-    api.getTimeBudget(vehicleId)
+    api.getTimeBudget(vehicleId, fromISO, toISO)
       .then(setTimeBudget)
       .finally(() => setLoadingBudget(false));
-  }, [vehicleId]);
+  }, [vehicleId, fromISO, toISO]);
 
   // Period-based location data + Top Places — refetches when date range changes
   const fetchPeriodData = useCallback(async () => {
