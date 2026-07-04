@@ -1441,6 +1441,10 @@ async def chat(
         {"role": "assistant", "content": answer},
     ]
     asyncio.create_task(_upload_session_to_s3(session_id, str(user_id), updated_history))
+    # v1.1.3 perf/chat-sessions-valkey-cache: invalidate the per-user sessions list
+    # cache so the widget refetches and sees the new message_count / last_message_at.
+    from app.services import sessions_cache as _sc
+    await _sc.invalidate(str(user_id))
 
     return ChatResponse(answer=answer, sources=sources, session_id=session_id)
 
@@ -1522,7 +1526,19 @@ async def list_sessions(
     user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List all chat sessions for current user, newest first."""
+    """List all chat sessions for current user, newest first.
+
+    v1.1.3 perf/chat-sessions-valkey-cache: read-through Valkey cache (60s TTL).
+    Cache hit → return immediately, skip the JOIN+GROUP BY.
+    Cache miss → query DB, then warm the cache for the next widget-open / post-chat
+    refetch. Invalidated on chat() / chat_stream() writes and on session deletes.
+    """
+    from app.services import sessions_cache
+
+    cached = await sessions_cache.get(str(user.id))
+    if cached is not None:
+        return cached
+
     from sqlalchemy import text
     await _ensure_chat_tables(db)
     result = await db.execute(text("""
@@ -1536,7 +1552,7 @@ async def list_sessions(
         ORDER BY s.updated_at DESC
         LIMIT 20
     """), {"uid": str(user.id)})
-    return [
+    sessions = [
         {
             "id": str(row[0]),
             "created_at": row[1].isoformat() if row[1] else None,
@@ -1546,6 +1562,9 @@ async def list_sessions(
         }
         for row in result.fetchall()
     ]
+    # list-of-dicts is JSON-safe; timestamps were already .isoformat()-ed above.
+    await sessions_cache.set(str(user.id), sessions)
+    return sessions
 
 
 @router.get("/sessions/{session_id}", response_model=dict)
@@ -1587,11 +1606,14 @@ async def delete_session(
 ):
     """Delete a specific session and all its messages."""
     from sqlalchemy import text
+    from app.services import sessions_cache
+
     result = await db.execute(text(
         "DELETE FROM chat_sessions WHERE id = :sid AND user_id = :uid RETURNING id"
     ), {"sid": session_id, "uid": str(user.id)})
     if not result.fetchone():
         raise HTTPException(status_code=404, detail="Session not found")
+    await sessions_cache.invalidate(str(user.id))
     return {"deleted": True}
 
 
@@ -1602,8 +1624,11 @@ async def delete_all_sessions(
 ):
     """Delete all chat sessions for current user."""
     from sqlalchemy import text
+    from app.services import sessions_cache
+
     result = await db.execute(text(
         "DELETE FROM chat_sessions WHERE user_id = :uid RETURNING id"
     ), {"uid": str(user.id)})
     deleted = len(result.fetchall())
+    await sessions_cache.invalidate(str(user.id))
     return {"deleted_count": deleted}
