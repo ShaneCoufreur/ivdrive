@@ -1128,7 +1128,18 @@ class DataCollector:
                     try:
                         from app.services.ai_embeddings import queue_content
                         from app.services.embedding_builders import CONTENT_TYPES
+                        # v1.1.3 fix/embedding-producer-guard: enqueue unconditionally.
+                        # The 'no source data' check is now done by the embedding worker
+                        # (see app/services/embedding_worker.py:process_one), which runs
+                        # the same builder anyway when processing the queue. Doing the
+                        # check here too doubled the DB load on every poll without
+                        # any benefit — PR Agent #167 perf concern.
+                        # The worker treats 'no source data' as a PERMANENT failure
+                        # and deletes the queue row immediately, so the queue stays
+                        # clean without an infinite enqueue→fail→re-enqueue loop.
                         for ct, (prefix, _builder) in CONTENT_TYPES.items():
+                            # _builder intentionally unused — worker runs it. See comment above.
+                            del _builder
                             await queue_content(
                                 session,
                                 user_id=vehicle.user_id,
