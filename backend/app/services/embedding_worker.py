@@ -191,6 +191,13 @@ async def process_pending_batch(session, batch_size: int, max_attempts: int) -> 
                 text("DELETE FROM ai_embeddings_queue WHERE id = :id"),
                 {"id": queue_id},
             )
+            # PR Agent post-merge review: commit the DELETE immediately so a
+            # worker crash mid-batch doesn't roll back all the permanent-removal
+            # work we've done in this tick. Transient failures below keep
+            # their (attempts, error) updates batched with the final
+            # commit — losing one (attempts+1) on a crash is harmless, the
+            # next tick will pick the row up again.
+            await session.commit()
         else:
             # Transient failure — increment attempts, mark failed at max_attempts.
             logger.warning(
