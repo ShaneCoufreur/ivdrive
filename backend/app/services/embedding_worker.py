@@ -142,9 +142,9 @@ async def process_one(
             text("DELETE FROM ai_embeddings_queue WHERE id = :id"),
             {"id": queue_id},
         )
-        return True, "ok"
+        return True, False, "ok"
     except Exception as e:
-        return False, f"store error: {e!r}"
+        return False, False, f"store error: {e!r}"
 
 
 async def process_pending_batch(session, batch_size: int, max_attempts: int) -> int:
