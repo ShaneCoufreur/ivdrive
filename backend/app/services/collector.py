@@ -72,14 +72,44 @@ class DataCollector:
 
     async def start(self) -> None:
         registered = 0
-        async with async_session() as session:
-            stmt = (
-                select(UserVehicle)
-                .where(UserVehicle.collection_enabled.is_(True))
-                .options(selectinload(UserVehicle.connector_session))
+        # v1.1.3 fix/collector-startup-retry: wrap the initial DB query in a retry loop.
+        # Previously, if Postgres was briefly unavailable (e.g. just restarted itself),
+        # asyncpg raised ConnectionRefusedError at startup and the entire process exited
+        # with code 1 — leaving the container Up but with 0 processes. We'd then
+        # need a manual restart to recover. Retry up to 12 times × 5s = 60s before
+        # giving up (docker compose restart policy then takes over for the next attempt).
+        vehicles: list = []
+        last_exc: Exception | None = None
+        for attempt in range(1, 13):
+            try:
+                async with async_session() as session:
+                    stmt = (
+                        select(UserVehicle)
+                        .where(UserVehicle.collection_enabled.is_(True))
+                        .options(selectinload(UserVehicle.connector_session))
+                    )
+                    result = await session.execute(stmt)
+                    vehicles = result.scalars().all()
+                if attempt > 1:
+                    logger.info(
+                        "DataCollector: Postgres reachable after %d attempts", attempt,
+                    )
+                break
+            except Exception as exc:
+                last_exc = exc
+                logger.warning(
+                    "DataCollector: startup DB query failed (attempt %d/12): %s — retrying in 5s",
+                    attempt, exc,
+                )
+                await asyncio.sleep(5)
+        else:
+            # Exhausted retries — re-raise so the process exits with a clear traceback
+            # and docker compose restart policy can pick up the next attempt.
+            logger.error(
+                "DataCollector: Postgres unreachable after 12 attempts; exiting for restart policy."
             )
-            result = await session.execute(stmt)
-            vehicles = result.scalars().all()
+            if last_exc:
+                raise last_exc
 
         for vehicle in vehicles:
             if vehicle.connector_session and vehicle.connector_session.access_token_encrypted:
@@ -1098,7 +1128,18 @@ class DataCollector:
                     try:
                         from app.services.ai_embeddings import queue_content
                         from app.services.embedding_builders import CONTENT_TYPES
+                        # v1.1.3 fix/embedding-producer-guard: enqueue unconditionally.
+                        # The 'no source data' check is now done by the embedding worker
+                        # (see app/services/embedding_worker.py:process_one), which runs
+                        # the same builder anyway when processing the queue. Doing the
+                        # check here too doubled the DB load on every poll without
+                        # any benefit — PR Agent #167 perf concern.
+                        # The worker treats 'no source data' as a PERMANENT failure
+                        # and deletes the queue row immediately, so the queue stays
+                        # clean without an infinite enqueue→fail→re-enqueue loop.
                         for ct, (prefix, _builder) in CONTENT_TYPES.items():
+                            # _builder intentionally unused — worker runs it. See comment above.
+                            del _builder
                             await queue_content(
                                 session,
                                 user_id=vehicle.user_id,

@@ -359,6 +359,9 @@ async def get_battery_health(
     latest_derived_kwh = None
 
     if soh_estimates:
+        # v1.1.3 fix/soh-cap-100-percent: the 103% noise buffer was kept for filtering
+        # (rejects regen-inflated values that exceed 103% of factory), but the resulting
+        # percentage and capacity now clamp to factory. A real battery never has SoH > 100%.
         limit_kwh = float(factory_kwh) * 1.03
         valid = [r for r in soh_estimates if r.estimated_kwh and float(r.estimated_kwh) <= limit_kwh]
         if valid:
@@ -370,17 +373,27 @@ async def get_battery_health(
             for month in sorted(by_month.keys()):
                 vals = by_month[month]
                 avg_kwh = round(sum(vals) / len(vals), 2)
-                soh_pct = round((avg_kwh / float(factory_kwh)) * 100, 1)
+                # v1.1.3 fix/soh-cap-100-percent: guard against ZeroDivisionError
+                # when factory_kwh is zero/anomalous, and clamp BOTH bounds to [0,100].
+                # PR Agent #168 finding — previous code only clamped the upper bound,
+                # letting negative values from cold-soak under-voltage pass through.
+                f_kwh = float(factory_kwh)
+                raw_pct = round((avg_kwh / f_kwh) * 100, 1) if f_kwh > 0 else 0.0
                 curve_data.append({
                     "month": month,
-                    "estimated_kwh": avg_kwh,
-                    "soh_pct": soh_pct,
+                    "estimated_kwh": round(max(0.0, min(avg_kwh, f_kwh)), 2),
+                    "soh_pct": max(0.0, min(raw_pct, 100.0)),
                     "sample_count": len(vals),
                 })
 
     if valid:
-        latest_derived = round((float(valid[0].estimated_kwh) / float(factory_kwh)) * 100, 1)
-        latest_derived_kwh = float(valid[0].estimated_kwh)
+        raw_latest_kwh = float(valid[0].estimated_kwh)
+        # v1.1.3 fix/soh-cap-100-percent: same clamp + zero-division guard as above
+        # for the summary latest_derived values.
+        f_kwh = float(factory_kwh)
+        raw_latest_pct = round((raw_latest_kwh / f_kwh) * 100, 1) if f_kwh > 0 else 0.0
+        latest_derived_kwh = round(max(0.0, min(raw_latest_kwh, f_kwh)), 2)
+        latest_derived = max(0.0, min(raw_latest_pct, 100.0))
 
     return {
         "skoda_soh_pct": latest_bh.hv_battery_soh if latest_bh else None,
@@ -2319,7 +2332,22 @@ async def get_route_efficiency(
         avg_eff = round(sum(effs) / len(effs), 1) if effs else 0
         avg_temp = round(sum(data["temps"]) / len(data["temps"]), 1) if data["temps"] else None
         total_dist = sum(data["distances"])
-        score = max(0, 100 - (avg_eff - 12) * 10) if avg_eff > 0 else 50
+        # v1.1.3 fix/statistics-period-limit-from-daterange (RouteEfficiency):
+        # previous formula `max(0, 100 - (avg_eff - 12) * 10)` clipped to 0 at any
+        # avg_eff >= 22 kWh/100km. For a Skoda Enyaq, normal driving is 15-22 and
+        # winter/motorway is 25-35 — so 56% of routes on this vehicle were scoring
+        # 0 (no differentiation between 'slightly inefficient' and 'terrible').
+        #
+        # New formula: 100 at <=12 kWh/100km (great), linear to 0 at >=35 kWh/100km
+        # (genuinely bad). Anything in between gets a meaningful score.
+        if avg_eff <= 0:
+            score = 50  # no data — neutral
+        elif avg_eff <= 12:
+            score = 100
+        elif avg_eff >= 35:
+            score = 0
+        else:
+            score = round(100 * (35 - avg_eff) / 23, 1)
 
         results.append({
             "route_key": f"{data['start_name']} → {data['end_name']}",
