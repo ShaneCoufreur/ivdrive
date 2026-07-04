@@ -596,6 +596,24 @@ async def queue_content(
     vehicle_id: uuid.UUID | None = None,
     priority: int = 0,
 ) -> bool:
+    """Insert a pending row into ai_embeddings_queue, deduplicating against
+    existing pending rows for the same (content_type, content_id) pair.
+
+    The `ON CONFLICT DO NOTHING` clause matches the partial unique index
+    `idx_queue_pending_dedup` defined in alembic migration
+    `c4d5e6f7a8b9_add_queue_pending_dedup_index.py`:
+
+        CREATE UNIQUE INDEX idx_queue_pending_dedup
+            ON ai_embeddings_queue (content_type, content_id)
+            WHERE status = 'pending';
+
+    Without that index, Postgres has nothing for ON CONFLICT to match
+    against and every collector poll cycle silently inserts a fresh
+    duplicate — observed in production as 1462 pending rows for ~70 unique
+    pairs (each pair re-enqueued ~20× by the collector between
+    worker ticks). The index makes the dedup contract explicit at the
+    schema level rather than relying on the caller not double-calling.
+    """
     try:
         await db.execute(
             text("""
@@ -603,7 +621,7 @@ async def queue_content(
                   (id, user_id, vehicle_id, content_type, content_id, status, priority, created_at, updated_at)
                 VALUES
                   (gen_random_uuid(), :user_id, :vehicle_id, :content_type, :content_id, 'pending', :priority, NOW(), NOW())
-                ON CONFLICT DO NOTHING
+                ON CONFLICT (content_type, content_id) WHERE status = 'pending' DO NOTHING
             """),
             {
                 "user_id": str(user_id),

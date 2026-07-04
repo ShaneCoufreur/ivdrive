@@ -873,36 +873,73 @@ class DataCollector:
                             mileage_in_km=maint_resp.mileage_in_km,
                         ))
 
-                # --- BatteryHealth: only write when real data is available from status API ---
-                # The Skoda API provides SOC and estimated range during charging.
-                # Other fields (cell voltages, temperatures) are not exposed by the API.
-                _overall_batt = getattr(status_resp.overall, 'battery', None) if status_resp and status_resp.overall else None
-                if _overall_batt is not None:
-                    batt = _overall_batt
-                    soc = getattr(batt, "state_of_charge_in_percent", None)
-                    if soc is not None:
-                        session.add(BatteryHealth(
-                            user_vehicle_id=user_vehicle_id,
-                            captured_at=now,
-                            # twelve_v fields — not exposed by Skoda API
-                            twelve_v_battery_voltage=None,
-                            twelve_v_battery_soc=None,
-                            twelve_v_battery_soh=None,
-                            # HV battery from status endpoint (when available)
-                            hv_battery_voltage=getattr(batt, "voltage", None),
-                            hv_battery_current=getattr(batt, "current", None),
-                            hv_battery_temperature=getattr(batt, "temperature", None),
-                            hv_battery_soh=getattr(batt, "soh", None),
-                            hv_battery_degradation_pct=None,
-                            # Cell-level data — not exposed by Skoda API
-                            cell_voltage_min=None,
-                            cell_voltage_max=None,
-                            cell_voltage_avg=None,
-                            cell_temperature_min=None,
-                            cell_temperature_max=None,
-                            cell_temperature_avg=None,
-                            imbalance_mv=None,
-                        ))
+                # --- BatteryHealth: source from driving-range, not vehicle-status. ---
+                #
+                # Background: this block previously read `status_resp.overall.battery`
+                # (the Skoda vehicle-status endpoint). That field was removed in
+                # newer myskoda releases — the 2026-05-07 fix wrapped the lookup in
+                # getattr() so the collector stopped crashing, but it then silently
+                # skipped the BatteryHealth write for every poll on every vehicle.
+                # As a result, no battery_health rows have been written since
+                # 2026-05-05 (2 months of data lost).
+                #
+                # Fix: source SOC from `driving.primary_engine_range.current_so_c_in_percent`
+                # (driving-range endpoint, loaded earlier in this poll). When the
+                # upstream myskoda library or Skoda API exposes richer battery data
+                # (cell voltages, temps, soh), wire it here too.
+                #
+                # Other fields (cell voltages, cell temps, imbalance) are not exposed
+                # by Skoda's current API. Twelve-volt and degradation fields are also
+                # not exposed — left NULL with a comment so future schema audits see
+                # the intent.
+                _driving_soc: int | None = None
+                if driving and driving.primary_engine_range:
+                    _driving_soc = driving.primary_engine_range.current_so_c_in_percent
+                _charging_soc: int | None = None
+                if charging and getattr(charging, "battery", None) is not None:
+                    _charging_soc = charging.battery.state_of_charge_in_percent
+                _soc: int | None = _driving_soc if _driving_soc is not None else _charging_soc
+                if _soc is not None:
+                    session.add(BatteryHealth(
+                        user_vehicle_id=user_vehicle_id,
+                        captured_at=now,
+                        # twelve_v fields — not exposed by Skoda API
+                        twelve_v_battery_voltage=None,
+                        twelve_v_battery_soc=None,
+                        twelve_v_battery_soh=None,
+                        # HV battery — SOC from driving-range (fallback: charging.battery)
+                        hv_battery_voltage=None,  # not exposed by current Skoda API
+                        hv_battery_current=None,  # not exposed by current Skoda API
+                        hv_battery_temperature=None,  # not exposed by current Skoda API
+                        hv_battery_soh=None,  # not exposed by current Skoda API
+                        hv_battery_degradation_pct=None,  # not exposed by current Skoda API
+                        # Cell-level data — not exposed by Skoda API
+                        cell_voltage_min=None,
+                        cell_voltage_max=None,
+                        cell_voltage_avg=None,
+                        cell_temperature_min=None,
+                        cell_temperature_max=None,
+                        cell_temperature_avg=None,
+                        imbalance_mv=None,
+                    ))
+                    logger.debug(
+                        "BatteryHealth written for %s (soc=%s%%, source=%s)",
+                        user_vehicle_id, _soc,
+                        "driving_range" if _driving_soc is not None else "charging",
+                    )
+                else:
+                    # Both driving-range and charging endpoints returned no SOC for
+                    # this vehicle on this poll. Don't silently skip — log so this
+                    # failure mode is visible in operations. A persistent absence
+                    # means either Skoda temporarily didn't return the field or
+                    # myskoda mapped it elsewhere; both warrant investigation.
+                    logger.warning(
+                        "BatteryHealth skipped for vehicle %s: no SOC returned by "
+                        "driving-range (primary_engine_range.current_so_c_in_percent) "
+                        "or charging (charging.battery.state_of_charge_in_percent). "
+                        "myskoda version or Skoda API may have moved this field.",
+                        user_vehicle_id,
+                    )
 
                 # --- PowerUsage: only write when charging (Skoda provides charge_power_kw) ---
                 if is_charging and charging and charging.status:
