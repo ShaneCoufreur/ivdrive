@@ -467,11 +467,11 @@ class DataCollector:
             
             try:
                 # If we had a 403 last cycle, we force a login now.
-                force_login = getattr(cs, "_force_login_next", False)
+                force_login = getattr(cs, "force_login_next", False)
                 access_token = await lifecycle.ensure_valid_token(
                     cs, username, password, force_refresh=force, force_login=force_login
                 )
-                cs._force_login_next = False
+                cs.force_login_next = False
                 await session.flush()
             except AuthRequiredError as e:
                 logger.warning("Skipping scheduled fetch for vehicle %s: %s", user_vehicle_id, e)
@@ -1332,7 +1332,7 @@ def _apply_health(cs: ConnectorSession, reached: bool, cycle_errors: list, now: 
                 cs.last_error_text = "Škoda rejected the saved login after multiple attempts."
             else:
                 cs.last_error_text = f"Multiple auth rejections (HTTP 403). Retrying full login next cycle ({cs.consecutive_auth_failures}/3)."
-                cs._force_login_next = True
+                cs.force_login_next = True
         else:
             cs.last_error_text = "Single endpoint auth rejection (HTTP 403). Forcing token refresh next cycle."
             cs.token_expires_at = now - timedelta(minutes=5)

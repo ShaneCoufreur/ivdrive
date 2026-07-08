@@ -379,6 +379,56 @@ async def refresh_vehicle(
     return {"status": "queued", "message": "Manual refresh triggered successfully"}
 
 
+@router.post("/{vehicle_id}/reauthenticate", status_code=status.HTTP_200_OK)
+async def reauthenticate_vehicle(
+    vehicle_id: uuid.UUID,
+    payload: VehicleReauth,
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Force a new login attempt on the next cycle, clearing the backoff state."""
+    vehicle = await _get_user_vehicle(vehicle_id, user, db)
+    
+    # Update credentials if provided
+    if payload.skoda_username or payload.skoda_password or payload.skoda_spin:
+        if vehicle.connector_config_encrypted:
+            config_str = decrypt_field(vehicle.connector_config_encrypted)
+            try:
+                config = json.loads(config_str)
+            except Exception:
+                config = {}
+        else:
+            config = {}
+            
+        if payload.skoda_username is not None:
+            config["username"] = payload.skoda_username
+        if payload.skoda_password is not None:
+            config["password"] = payload.skoda_password
+        if payload.skoda_spin is not None:
+            config["spin"] = payload.skoda_spin
+            
+        vehicle.connector_config_encrypted = encrypt_field(json.dumps(config))
+    
+    if not vehicle.connector_session:
+        raise HTTPException(status_code=400, detail="Vehicle has no connector session")
+        
+    cs = vehicle.connector_session
+    cs.status = "active"
+    cs.consecutive_auth_failures = 0
+    cs.consecutive_failures = 0
+    cs.force_login_next = True
+    cs.needs_user_reauth_reason = None
+    cs.last_error_text = None
+    cs.backoff_until = None
+    
+    await db.commit()
+    
+    # Trigger a refresh immediately so the user doesn't have to wait 5 minutes
+    await publish_vehicle_refresh(str(vehicle_id))
+    
+    return {"status": "success", "message": "Re-authentication triggered"}
+
+
 @router.get("/{vehicle_id}/data-health", response_model=VehicleDataHealthResponse)
 async def get_vehicle_data_health(
     vehicle_id: uuid.UUID,

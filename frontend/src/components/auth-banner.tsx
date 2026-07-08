@@ -44,6 +44,7 @@ export function AuthReauthBanner({ vehicle }: { vehicle: Vehicle }) {
       }
       setOpen(false);
       setPassword("");
+      queryClient.invalidateQueries({ queryKey: ["vehicles"] });
     } catch (e: any) {
       setErr(e?.message || "Failed to reauthenticate");
     } finally {

@@ -36,8 +36,10 @@ def upgrade() -> None:
     op.add_column('connector_sessions', sa.Column('secure_mode', sa.Boolean(), server_default='true', nullable=False))
     op.add_column('connector_sessions', sa.Column('backoff_until', sa.DateTime(timezone=True), nullable=True))
     op.add_column('connector_sessions', sa.Column('consecutive_auth_failures', sa.Integer(), server_default='0', nullable=False))
+    op.add_column('connector_sessions', sa.Column('force_login_next', sa.Boolean(), server_default='false', nullable=False))
 
 def downgrade() -> None:
+    op.drop_column('connector_sessions', 'force_login_next')
     op.drop_column('connector_sessions', 'consecutive_auth_failures')
     op.drop_column('connector_sessions', 'backoff_until')
     op.drop_column('connector_sessions', 'secure_mode')

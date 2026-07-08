@@ -11,9 +11,23 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.execute("ALTER TABLE connector_sessions ADD COLUMN IF NOT EXISTS last_success_at TIMESTAMP WITH TIME ZONE")
-    op.execute("ALTER TABLE connector_sessions ADD COLUMN IF NOT EXISTS consecutive_failures INTEGER NOT NULL DEFAULT 0")
-    op.execute("ALTER TABLE connector_sessions ADD COLUMN IF NOT EXISTS last_error_text VARCHAR(255)")
+    op.add_column(
+        "connector_sessions",
+        sa.Column("last_success_at", sa.DateTime(timezone=True), nullable=True),
+    )
+    op.add_column(
+        "connector_sessions",
+        sa.Column(
+            "consecutive_failures",
+            sa.Integer(),
+            nullable=False,
+            server_default="0",
+        ),
+    )
+    op.add_column(
+        "connector_sessions",
+        sa.Column("last_error_text", sa.String(length=255), nullable=True),
+    )
 
 
 def downgrade() -> None:

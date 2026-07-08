@@ -133,6 +133,7 @@ class ConnectorSession(TimestampMixin, Base):
     secure_mode: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
     backoff_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     consecutive_auth_failures: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
+    force_login_next: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
 
     user_vehicle: Mapped["UserVehicle"] = relationship(back_populates="connector_session")
     auth_events: Mapped[list["ConnectorAuthEvent"]] = relationship(
