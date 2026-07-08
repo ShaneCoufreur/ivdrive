@@ -29,6 +29,8 @@ _BROWSER_HEADERS = {
         "image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3"
     ),
     "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate",
+    "Upgrade-Insecure-Requests": "1",
     "X-Requested-With": "cz.skodaauto.connect",
 }
 
@@ -101,9 +103,29 @@ class SkodaAuthClient:
             timeout=30.0,
         )
 
+    async def _reset_session(self) -> None:
+        """Clear httpx connection pool before sensitive operations.
+
+        Stale connections in the pool cause 'Remote end closed connection without
+        response' errors when Skoda has already closed them server-side but
+        httpx still thinks they're alive. Adopted from
+        tillsteinbach/CarConnectivity-connector-skoda (my_skoda_session.py).
+        """
+        try:
+            await self._session.aclose()
+        except Exception:
+            pass
+        self._session = httpx.AsyncClient(
+            headers=_BROWSER_HEADERS,
+            follow_redirects=True,
+            timeout=30.0,
+        )
+
     async def login(self, username: str, password: str) -> dict:
         verifier, challenge = _generate_pkce()
         client_id = settings.skoda_auth_client_id
+
+        await self._reset_session()
 
         authorize_params = {
             "response_type": "code",
@@ -257,6 +279,7 @@ class SkodaAuthClient:
             f"{settings.skoda_base_url}/api/v1/authentication/"
             "refresh-token?tokenType=CONNECT"
         )
+        await self._reset_session()
         resp = await self._session.post(
             refresh_url, json={"token": refresh_token}
         )

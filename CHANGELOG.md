@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## [v1.1.3] - 2026-07-08
+Major authentication architecture overhaul and frontend fetching modernization. Resolves persistent API anti-bot rejection issues and transient backend server errors. The authentication state machine has been hardened to securely maintain and refresh sessions, supported by a newly introduced frontend query layer and user-facing connection state UI.
+
+### Fixed
+- **Authentication anti-bot 403s & 500s**: The backend data collector now distinguishes between transient server errors (500s) and hard authorization rejections (403s/401s). The internal token lifecycle handles silent re-login with stored credentials when access is rejected by anti-bot measures, effectively bypassing the token expiry limit without dropping the connection. 
+- **React Hook Dependency Bugs**: Resolved existing React Doctor `rules-of-hooks` errors, `useEffect` callback syncing loops, and exhaustive-deps warnings on the main dashboard components, improving frontend health.
+
+### Changed
+- **Dashboard Data Fetching via TanStack Query**: Replaced legacy `useState` & `useEffect` data fetching patterns on the vehicle dashboard with `@tanstack/react-query`. Ensures the UI stays fresh without causing re-renders or "stuck" loading states.
+- **In-card Auth Strategy UI**: Moved authentication method and connector error indicators directly inside the vehicle card title row for immediate context regarding the last successful connection type and any active transient errors.
+- **Manual Re-authentication UI**: A new banner seamlessly prompts users to re-enter credentials specifically when the backend flags that manual intervention is required. Upon success, React Query instantly invalidates the cache, clearing the banner and resuming live data flow without requiring a manual page reload.
+
+
+
+
 ## [v1.1.2.1] - 2026-07-04
 Bugfix & hardening patch: six targeted fixes that landed on `development` after v1.1.2 — Content-Security-Policy tightening, collector startup retry, chat markdown XSS hardening, the chat sessions Valkey cache (which was silently no-op), the embedding-producer perf refactor, and the SoH `[0, 100]` clamp + zero-division guard. Plus the repo-hygiene cleanup that was sitting in `[Unreleased]` since v1.1.2.
 
@@ -118,7 +133,9 @@ compose template.
 - **chat_tools.py (missing table)**: `log_missing_capability` referenced `ai_missed_intents` table that was never created — caused `Internal Server Error` whenever the router fell back to "I don't have that capability". Added migration `8b3c4d5e6f70_add_ai_missed_intents.py` to create the table + index; applied to production DB.
 - chat.py (agentic router): tighten prompt to forbid `log_missing_capability` for short follow-ups ("how much did that cost?") when prior turn established a vehicle — prefer tools 5/6/7 with the resolved vehicle name.
 
-## [Unreleased] - 2026-06-26
+## [Unreleased]
+
+ - 2026-06-26
 ### Changed
 - **Frontend react-doctor cleanup — Passes 1, 2, 3, 5, 6A, 6B** (branch `fix/react-doctor-cleanup-passes-1-2-3-5`)
   - Issues: 264 → 92 (−172), errors: 1 → 0, files: 48 → 28, score: 45 → 48
@@ -138,7 +155,9 @@ compose template.
   - **Low**: `vehicles/[id]/page.tsx` tab-switching `useEffect` — no cleanup, in-flight requests could `setState` on stale instance (race conditions). Fixed: `let isMounted = true` + guard every setter + return cleanup.
   - **Low**: `vehicles/[id]/page.tsx` `handleDelete` — swallowed errors and closed the modal on failure (no user feedback). Fixed: keep modal open, route error through existing `setCmdResult` toast.
 
-## [Unreleased] - 2026-05-08
+## [Unreleased]
+
+ - 2026-05-08
 ### Fixed
 - DrivingDashboard + MovementDashboard (frontend): All data sources now respect the selected dateRange — odometer, visited locations, time budget, and trips all use the same period filter. Previously time budget and mileage showed all-time data regardless of the date picker.
 - DrivingDashboard (frontend): KPI cards now show period totals (sum of all days in range) instead of only the latest-day values. Historical stats table now shows all available rows with scrollable overflow instead of hard-coded slice of 7.
