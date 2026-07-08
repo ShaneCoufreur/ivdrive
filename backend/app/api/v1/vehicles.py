@@ -195,6 +195,13 @@ def _vehicle_to_response(v: UserVehicle) -> VehicleResponse:
         last_success_at=cs.last_success_at if cs else None,
         consecutive_failures=cs.consecutive_failures if cs else 0,
         last_error_text=cs.last_error_text if cs else None,
+        last_auth_at=cs.last_auth_at if cs else None,
+        last_auth_method=cs.last_auth_method if cs else None,
+        last_auth_error=cs.last_auth_error if cs else None,
+        needs_user_reauth_reason=cs.needs_user_reauth_reason if cs else None,
+        secure_mode=cs.secure_mode if cs else True,
+        consecutive_auth_failures=cs.consecutive_auth_failures if cs else 0,
+        backoff_until=cs.backoff_until if cs else None,
         created_at=v.created_at,
     )
 
@@ -370,6 +377,56 @@ async def refresh_vehicle(
     await _get_user_vehicle(vehicle_id, user, db)
     await publish_vehicle_refresh(str(vehicle_id))
     return {"status": "queued", "message": "Manual refresh triggered successfully"}
+
+
+@router.post("/{vehicle_id}/reauthenticate", status_code=status.HTTP_200_OK)
+async def reauthenticate_vehicle(
+    vehicle_id: uuid.UUID,
+    payload: VehicleReauth,
+    user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Force a new login attempt on the next cycle, clearing the backoff state."""
+    vehicle = await _get_user_vehicle(vehicle_id, user, db)
+    
+    # Update credentials if provided
+    if payload.skoda_username or payload.skoda_password or payload.skoda_spin:
+        if vehicle.connector_config_encrypted:
+            config_str = decrypt_field(vehicle.connector_config_encrypted)
+            try:
+                config = json.loads(config_str)
+            except Exception:
+                config = {}
+        else:
+            config = {}
+            
+        if payload.skoda_username is not None:
+            config["username"] = payload.skoda_username
+        if payload.skoda_password is not None:
+            config["password"] = payload.skoda_password
+        if payload.skoda_spin is not None:
+            config["spin"] = payload.skoda_spin
+            
+        vehicle.connector_config_encrypted = encrypt_field(json.dumps(config))
+    
+    if not vehicle.connector_session:
+        raise HTTPException(status_code=400, detail="Vehicle has no connector session")
+        
+    cs = vehicle.connector_session
+    cs.status = "active"
+    cs.consecutive_auth_failures = 0
+    cs.consecutive_failures = 0
+    cs.force_login_next = True
+    cs.needs_user_reauth_reason = None
+    cs.last_error_text = None
+    cs.backoff_until = None
+    
+    await db.commit()
+    
+    # Trigger a refresh immediately so the user doesn't have to wait 5 minutes
+    await publish_vehicle_refresh(str(vehicle_id))
+    
+    return {"status": "success", "message": "Re-authentication triggered"}
 
 
 @router.get("/{vehicle_id}/data-health", response_model=VehicleDataHealthResponse)

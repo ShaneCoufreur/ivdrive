@@ -47,6 +47,14 @@ class VehicleResponse(BaseModel):
     last_success_at: datetime | None = None
     consecutive_failures: int = 0
     last_error_text: str | None = None
+    # Advanced auth lifecycle (2026-07 refactor)
+    last_auth_at: datetime | None = None
+    last_auth_method: str | None = None
+    last_auth_error: str | None = None
+    needs_user_reauth_reason: str | None = None
+    secure_mode: bool = True
+    consecutive_auth_failures: int = 0
+    backoff_until: datetime | None = None
     created_at: datetime
     # Efficiency calibration
     charger_power_kw: float | None = None
@@ -72,6 +80,7 @@ class VehicleUpdate(BaseModel):
     display_name: str | None = None
     collection_enabled: bool | None = None
     incognito_mode: bool | None = None
+    secure_mode: bool | None = None
     active_interval_seconds: int | None = Field(default=None, ge=60, le=86400)
     parked_interval_seconds: int | None = Field(default=None, ge=60, le=86400)
     wltp_range_km: float | None = Field(default=None, ge=1, le=2000)
