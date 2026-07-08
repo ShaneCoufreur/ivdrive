@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { AlertTriangle, KeyRound, Loader2, X } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import type { Vehicle } from "@/lib/hooks/use-vehicles";
 
 /**
@@ -24,6 +25,8 @@ export function AuthReauthBanner({ vehicle }: { vehicle: Vehicle }) {
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  
+  const queryClient = useQueryClient();
 
   if (!reason) return null;
 

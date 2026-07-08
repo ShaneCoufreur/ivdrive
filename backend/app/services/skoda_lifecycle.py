@@ -27,12 +27,14 @@ class SkodaTokenLifecycle:
         self.session.add(event)
 
     def _update_tokens(self, cs: ConnectorSession, tokens: dict, method: str) -> None:
-        access_token = tokens.get("accessToken") or tokens.get("access_token", "")
-        refresh_token = tokens.get("refreshToken") or tokens.get("refresh_token", "")
-        if access_token:
-            cs.access_token_encrypted = encrypt_field(access_token)
-        if refresh_token:
-            cs.refresh_token_encrypted = encrypt_field(refresh_token)
+        access_token = tokens.get("accessToken") or tokens.get("access_token")
+        refresh_token = tokens.get("refreshToken") or tokens.get("refresh_token")
+        
+        if not access_token or not refresh_token:
+            raise AuthRequiredError("Auth response missing required tokens")
+            
+        cs.access_token_encrypted = encrypt_field(access_token)
+        cs.refresh_token_encrypted = encrypt_field(refresh_token)
         expires_in = tokens.get("expiresIn") or tokens.get("expires_in", 3600)
         now = datetime.now(UTC)
         cs.token_expires_at = now + timedelta(seconds=expires_in)
