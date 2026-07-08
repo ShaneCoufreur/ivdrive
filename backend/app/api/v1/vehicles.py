@@ -195,6 +195,13 @@ def _vehicle_to_response(v: UserVehicle) -> VehicleResponse:
         last_success_at=cs.last_success_at if cs else None,
         consecutive_failures=cs.consecutive_failures if cs else 0,
         last_error_text=cs.last_error_text if cs else None,
+        last_auth_at=cs.last_auth_at if cs else None,
+        last_auth_method=cs.last_auth_method if cs else None,
+        last_auth_error=cs.last_auth_error if cs else None,
+        needs_user_reauth_reason=cs.needs_user_reauth_reason if cs else None,
+        secure_mode=cs.secure_mode if cs else True,
+        consecutive_auth_failures=cs.consecutive_auth_failures if cs else 0,
+        backoff_until=cs.backoff_until if cs else None,
         created_at=v.created_at,
     )
 
