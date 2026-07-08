@@ -3,6 +3,7 @@ import "./globals.css";
 import { AuthProvider } from "@/lib/auth-context";
 import { ThemeProvider } from "@/lib/theme-provider";
 import { FeedbackProvider } from "@/components/ui/feedback";
+import { QueryProvider } from "@/lib/query-provider";
 
 export const metadata: Metadata = {
   title: "iVDrive",
@@ -44,7 +45,9 @@ export default function RootLayout({
       <body className="antialiased" suppressHydrationWarning>
         <ThemeProvider>
           <AuthProvider>
-            <FeedbackProvider>{children}</FeedbackProvider>
+            <FeedbackProvider>
+              <QueryProvider>{children}</QueryProvider>
+            </FeedbackProvider>
           </AuthProvider>
         </ThemeProvider>
       </body>

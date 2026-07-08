@@ -12,229 +12,73 @@ import { useAuth } from "@/lib/auth-context";
 
 import { VehicleCard, CardSkeleton } from "@/components/vehicle-card";
 
+import {
+  useVehicles,
+  useVehicleStatus,
+  useDeleteVehicle,
+  type Vehicle,
+  type VehicleStatus,
+} from "@/lib/hooks/use-vehicles";
 
+import { AuthReauthBanner, AuthMethodPill, ConnectorErrorPill } from "@/components/auth-banner";
 
-interface Vehicle {
-
-  id: string;
-
-  display_name: string | null;
-
-  manufacturer: string | null;
-
-  model: string | null;
-
-  model_year: string | null;
-
-  collection_enabled: boolean;
-
-  active_interval_seconds: number;
-
-  parked_interval_seconds: number;
-
-  image_url: string | null;
-
-  connector_status: string | null;
-
-  created_at: string;
-
+/** Wrapper component to isolate per-vehicle data fetching. */
+function VehicleRow({ vehicle, onDeleteRequest, onRefetch }: { vehicle: Vehicle, onDeleteRequest: (id: string) => void, onRefetch: () => void }) {
+  const { data: status, isLoading } = useVehicleStatus(vehicle.id);
+  
+  return (
+    <div className="space-y-3">
+      <AuthReauthBanner vehicle={vehicle} />
+      <VehicleCard
+        vehicleId={vehicle.id}
+        displayName={vehicle.display_name ?? undefined}
+        manufacturer={vehicle.manufacturer ?? undefined}
+        model={vehicle.model ?? undefined}
+        modelYear={vehicle.model_year ?? null}
+        imageUrl={vehicle.image_url}
+        connectorStatus={vehicle.connector_status}
+        status={status ?? null}
+        loading={isLoading}
+        onDelete={onDeleteRequest}
+        onAfterRefresh={onRefetch}
+      />
+      <div className="px-1 flex items-center gap-2">
+        <AuthMethodPill vehicle={vehicle} />
+      </div>
+      <div className="px-1">
+        <ConnectorErrorPill vehicle={vehicle} />
+      </div>
+    </div>
+  );
 }
-
-
-
-interface VehicleStatus {
-
-  vin_last4?: string;
-
-  display_name?: string;
-
-  manufacturer?: string;
-
-  model?: string;
-
-  image_url?: string | null;
-
-  latest_battery_level: number | null;
-
-  latest_range_km: number | null;
-
-  latest_charging_state: string | null;
-
-  latest_vehicle_state: string | null;
-
-  latest_position: { latitude: number; longitude: number } | null;
-
-  last_updated: string | null;
-
-  is_online?: boolean | null;
-
-  doors_locked?: string | null;
-
-  connector_status?: string | null;
-
-  odometer_km?: number | null;
-
-  model_year?: string | null;
-
-}
-
-
 
 export default function DashboardPage() {
-
   const { user } = useAuth();
-
-  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
-
-  const [statuses, setStatuses] = useState<Record<string, VehicleStatus | null>>({});
-
-  const [loadingVehicles, setLoadingVehicles] = useState(true);
-
-  const [loadingStatuses, setLoadingStatuses] = useState<Record<string, boolean>>({});
-
   const [showAddModal, setShowAddModal] = useState(false);
-
   const [deleteModal, setDeleteModal] = useState<{ id: string; name: string } | null>(null);
 
+  // ── Data fetching via React Query ────────────────────────────────────────
+  const vehiclesQuery = useVehicles();
+  const vehicles: Vehicle[] = vehiclesQuery.data ?? [];
+  const loadingVehicles = vehiclesQuery.isLoading;
 
-
-  const fetchVehicles = useCallback(async () => {
-
-    try {
-
-      setLoadingVehicles(true);
-
-      const data = await api.getVehicles();
-
-      setVehicles(data);
-
-      return data as Vehicle[];
-
-    } catch {
-
-      setVehicles([]);
-
-      return [];
-
-    } finally {
-
-      setLoadingVehicles(false);
-
-    }
-
-  }, []);
-
-
-
-  const fetchStatuses = useCallback(async (vehicleList: Vehicle[]) => {
-
-    const loading: Record<string, boolean> = {};
-
-    vehicleList.forEach((v) => (loading[v.id] = true));
-
-    setLoadingStatuses(loading);
-
-
-
-    const results = await Promise.allSettled(
-
-      vehicleList.map(async (v) => {
-
-        const status = await api.getVehicleStatus(v.id);
-
-        return { id: v.id, status };
-
-      })
-
-    );
-
-
-
-    const newStatuses: Record<string, VehicleStatus | null> = {};
-
-    const doneLoading: Record<string, boolean> = {};
-
-    results.forEach((r, i) => {
-
-      const id = vehicleList[i].id;
-
-      doneLoading[id] = false;
-
-      if (r.status === "fulfilled") {
-
-        newStatuses[id] = r.value.status;
-
-      } else {
-
-        newStatuses[id] = null;
-
-      }
-
-    });
-
-
-
-    setStatuses(newStatuses);
-
-    setLoadingStatuses(doneLoading);
-
-  }, []);
-
-
-
-  useEffect(() => {
-
-    fetchVehicles().then((list) => {
-
-      if (list.length > 0) fetchStatuses(list);
-
-    });
-
-  }, [fetchVehicles, fetchStatuses]);
-
-
-
-  const handleVehicleAdded = async () => {
-
-    setShowAddModal(false);
-
-    const list = await fetchVehicles();
-
-    if (list.length > 0) fetchStatuses(list);
-
-  };
-
-
+  const handleVehicleAdded = () => setShowAddModal(false);
 
   const handleDeleteRequest = (id: string) => {
-
-    const v = vehicles.find((v) => v.id === id);
-
+    const v = vehicles.find((vv) => vv.id === id);
     setDeleteModal({
-
       id,
-
-      name: v?.display_name || v?.manufacturer ? `${v.manufacturer} ${v.model}` : "this vehicle",
-
+      name: v?.display_name || (v?.manufacturer ? `${v.manufacturer} ${v.model}` : "this vehicle"),
     });
-
   };
 
-
-
+  const deleteVehicle = useDeleteVehicle();
   const handleDeleteConfirm = async () => {
-
     if (!deleteModal) return;
-
-    await api.deleteVehicle(deleteModal.id);
-
+    await deleteVehicle.mutateAsync(deleteModal.id);
     setDeleteModal(null);
-
-    const list = await fetchVehicles();
-
-    if (list.length > 0) fetchStatuses(list);
-
   };
+
 
 
 
@@ -333,39 +177,14 @@ export default function DashboardPage() {
       ) : (
 
         <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
-
           {vehicles.map((v) => (
-
-            <VehicleCard
-
-              key={v.id}
-
-              vehicleId={v.id}
-
-              displayName={v.display_name ?? undefined}
-
-              manufacturer={v.manufacturer ?? undefined}
-
-              model={v.model ?? undefined}
-
-              modelYear={v.model_year ?? null}
-
-              imageUrl={v.image_url}
-
-              connectorStatus={v.connector_status}
-
-              status={statuses[v.id] ?? null}
-
-              loading={loadingStatuses[v.id]}
-
-              onDelete={handleDeleteRequest}
-
-              onAfterRefresh={() => vehicles.length > 0 && fetchStatuses(vehicles)}
-
+            <VehicleRow 
+              key={v.id} 
+              vehicle={v} 
+              onDeleteRequest={handleDeleteRequest} 
+              onRefetch={() => vehiclesQuery.refetch()} 
             />
-
           ))}
-
         </div>
 
       )}
