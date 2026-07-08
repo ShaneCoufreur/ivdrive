@@ -123,5 +123,31 @@ class ConnectorSession(TimestampMixin, Base):
     last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     consecutive_failures: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     last_error_text: Mapped[str | None] = mapped_column(String(255))
+    
+    # Advanced Auth Lifecycle tracking
+    refresh_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_auth_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_auth_method: Mapped[str | None] = mapped_column(String(50))
+    last_auth_error: Mapped[str | None] = mapped_column(String(255))
+    needs_user_reauth_reason: Mapped[str | None] = mapped_column(String(255))
+    secure_mode: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
+    backoff_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    consecutive_auth_failures: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
 
     user_vehicle: Mapped["UserVehicle"] = relationship(back_populates="connector_session")
+    auth_events: Mapped[list["ConnectorAuthEvent"]] = relationship(
+        back_populates="session", cascade="all, delete-orphan", order_by="desc(ConnectorAuthEvent.created_at)"
+    )
+
+class ConnectorAuthEvent(TimestampMixin, Base):
+    __tablename__ = "connector_auth_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=generate_uuid)
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("connector_sessions.id", ondelete="CASCADE"), nullable=False
+    )
+    event_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    reason: Mapped[str | None] = mapped_column(String(255))
+    details: Mapped[dict | None] = mapped_column(JSONB)
+
+    session: Mapped["ConnectorSession"] = relationship(back_populates="auth_events")
