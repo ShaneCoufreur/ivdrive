@@ -99,6 +99,8 @@ interface VehicleCardProps {
 
   onAfterRefresh?: () => void;
 
+  authPill?: React.ReactNode;
+  errorPill?: React.ReactNode;
 }
 
 
@@ -286,6 +288,10 @@ export function VehicleCard({
   onDelete,
 
   onAfterRefresh,
+
+  authPill,
+
+  errorPill,
 
 }: VehicleCardProps) {
 
@@ -575,7 +581,19 @@ export function VehicleCard({
 
           
 
+          {authPill && (
+            <div className="flex-shrink-0 -mt-1" onClick={(e) => e.stopPropagation()}>
+              {authPill}
+            </div>
+          )}
+
         </div>
+
+        {errorPill && (
+          <div className="-mt-2 mb-1" onClick={(e) => e.stopPropagation()}>
+            {errorPill}
+          </div>
+        )}
 
 
 

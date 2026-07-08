@@ -41,13 +41,9 @@ function VehicleRow({ vehicle, onDeleteRequest, onRefetch }: { vehicle: Vehicle,
         loading={isLoading}
         onDelete={onDeleteRequest}
         onAfterRefresh={onRefetch}
+        authPill={<AuthMethodPill vehicle={vehicle} />}
+        errorPill={<ConnectorErrorPill vehicle={vehicle} />}
       />
-      <div className="px-1 flex items-center gap-2">
-        <AuthMethodPill vehicle={vehicle} />
-      </div>
-      <div className="px-1">
-        <ConnectorErrorPill vehicle={vehicle} />
-      </div>
     </div>
   );
 }
