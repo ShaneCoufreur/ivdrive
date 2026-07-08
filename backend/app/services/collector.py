@@ -452,43 +452,34 @@ class DataCollector:
                 logger.debug("Skipping scheduled fetch for vehicle %s (status: %s)", user_vehicle_id, cs.status)
                 return
 
-            if not cs.access_token_encrypted or not cs.refresh_token_encrypted:
-                logger.warning("Vehicle %s missing tokens", user_vehicle_id)
-                return
-
-            access_token = decrypt_field(cs.access_token_encrypted)
-            refresh_token = decrypt_field(cs.refresh_token_encrypted)
-
-            if cs.token_expires_at and cs.token_expires_at < datetime.now(UTC) + timedelta(minutes=2):
-                logger.info("Token expired for vehicle %s, refreshing", user_vehicle_id)
-                auth = SkodaAuthClient()
+            # Extract credentials
+            username, password = None, None
+            if vehicle.connector_config_encrypted:
                 try:
-                    tokens = await auth.refresh(refresh_token)
-                    access_token = tokens.get("accessToken") or tokens.get("access_token", "")
-                    refresh_token = tokens.get("refreshToken") or tokens.get("refresh_token", refresh_token)
-                    cs.access_token_encrypted = encrypt_field(access_token)
-                    cs.refresh_token_encrypted = encrypt_field(refresh_token)
-                    expires_in = tokens.get("expiresIn") or tokens.get("expires_in", 3600)
-                    cs.token_expires_at = datetime.now(UTC) + timedelta(seconds=expires_in)
-                    await session.flush()
-                except httpx.TimeoutException:
-                    logger.warning("Token refresh timed out for vehicle %s, will retry next cycle", user_vehicle_id)
-                    return
-                except httpx.HTTPStatusError as e:
-                    if e.response.status_code >= 500:
-                        logger.warning("Token refresh failed due to Skoda server error (HTTP %s) for vehicle %s. Retrying next cycle", e.response.status_code, user_vehicle_id)
-                        return
-                    logger.exception("Token refresh failed with client error for vehicle %s", user_vehicle_id)
-                    cs.status = "token_error"
-                    await session.commit()
-                    return
+                    config = json.loads(decrypt_field(vehicle.connector_config_encrypted))
+                    username = config.get("username")
+                    password = config.get("password")
                 except Exception:
-                    logger.exception("Token refresh failed with unknown error for vehicle %s", user_vehicle_id)
-                    cs.status = "token_error"
-                    await session.commit()
-                    return
-                finally:
-                    await auth.close()
+                    pass
+
+            from app.services.skoda_lifecycle import SkodaTokenLifecycle, AuthRequiredError
+            lifecycle = SkodaTokenLifecycle(session)
+            
+            try:
+                # If we had a 403 last cycle, we force a login now.
+                force_login = getattr(cs, "_force_login_next", False)
+                access_token = await lifecycle.ensure_valid_token(
+                    cs, username, password, force_refresh=force, force_login=force_login
+                )
+                cs._force_login_next = False
+                await session.flush()
+            except AuthRequiredError as e:
+                logger.warning("Skipping scheduled fetch for vehicle %s: %s", user_vehicle_id, e)
+                await session.commit()
+                return
+            except Exception as e:
+                logger.exception("Unknown token refresh error for vehicle %s", user_vehicle_id)
+                return
 
             vin = decrypt_field(vehicle.vin_encrypted)
             api = SkodaAPIClient(access_token)
@@ -1321,23 +1312,36 @@ async def _safe(coro, label: str, vehicle_id: UUID, errors: list | None = None):
         return None
 
 
-def _apply_health(cs, reached: bool, cycle_errors: list, now) -> None:
+def _apply_health(cs: ConnectorSession, reached: bool, cycle_errors: list, now: datetime) -> None:
     """Update ConnectorSession health bookkeeping after a collection cycle.
 
-    `reached` = we successfully contacted Škoda this cycle (the connection_status
-    probe returned). A 401/403 anywhere means the saved login was rejected and the
-    user must reconnect. Anything else that prevented contact is a transient/server
-    issue surfaced via consecutive_failures + last_error_text without forcing reauth.
+    `reached` = we successfully contacted Škoda this cycle (the connection_status probe returned).
+    Auth rejections (401, 403) trigger consecutive_auth_failures and expire the token so the next
+    cycle forces a refresh or silent login via SkodaTokenLifecycle.
+    Anything else that prevented contact is a transient/server issue surfaced via
+    consecutive_failures + last_error_text without forcing reauth.
     """
-    auth_rejected = any(e.get("status") in (401, 403) for e in cycle_errors)
-    if auth_rejected:
-        cs.status = "auth_failed"
-        cs.consecutive_failures = (cs.consecutive_failures or 0) + 1
-        cs.last_error_text = "Škoda rejected the saved login (authentication failed) — please reconnect."
+    auth_rejected_count = sum(1 for e in cycle_errors if e.get("status") in (401, 403, 400))
+    
+    if auth_rejected_count > 0:
+        if auth_rejected_count >= 2:
+            cs.consecutive_auth_failures = (cs.consecutive_auth_failures or 0) + 1
+            if cs.consecutive_auth_failures >= 3:
+                cs.status = "auth_failed"
+                cs.needs_user_reauth_reason = "Consistent 403s across multiple endpoints"
+                cs.last_error_text = "Škoda rejected the saved login after multiple attempts."
+            else:
+                cs.last_error_text = f"Multiple auth rejections (HTTP 403). Retrying full login next cycle ({cs.consecutive_auth_failures}/3)."
+                cs._force_login_next = True
+        else:
+            cs.last_error_text = "Single endpoint auth rejection (HTTP 403). Forcing token refresh next cycle."
+            cs.token_expires_at = now - timedelta(minutes=5)
         return
+
     if reached:
         cs.last_success_at = now
         cs.consecutive_failures = 0
+        cs.consecutive_auth_failures = 0
         cs.status = "active"
         cs.last_error_text = None
     else:
